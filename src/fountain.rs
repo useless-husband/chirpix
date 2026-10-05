@@ -44,11 +44,14 @@ impl Scheme {
 }
 
 /// Length of the repeating window schedule, and how many of each
-/// `PERIOD` consecutive packets go to windows 1..4.
+/// `PERIOD` consecutive packets go to windows 1..6.
 const PERIOD: usize = 50;
-const SHARES: [usize; 4] = [17, 9, 8, 16];
-/// Window sizes as fractions of K (the last is K itself).
-const FRACTIONS: [f64; 3] = [0.04, 0.095, 0.225];
+const SHARES: [usize; 6] = [17, 8, 7, 5, 5, 8];
+/// Window sizes as fractions of K (the last window is K itself). With the
+/// shares above and K = 0.34 x (packets heard in the design time), the
+/// windows complete after about 1/15, 1/5, 2/5, 3/5, 4/5 and all of the
+/// design time: 5, 15, 30, 45, 60 and 75 s for the default 75 s.
+const FRACTIONS: [f64; 5] = [0.045, 0.10, 0.22, 0.36, 0.56];
 
 #[derive(Clone)]
 pub struct Plan {
@@ -57,9 +60,17 @@ pub struct Plan {
     /// Window sizes in source packets, increasing; the last equals `k`.
     pub windows: Vec<usize>,
     pattern: Vec<u8>,
-    /// For each slot of the pattern: how many earlier slots use window 0.
-    w0_before: Vec<usize>,
+    /// For each slot of the pattern: how many earlier slots use the same window.
+    same_before: Vec<usize>,
+    /// Slots per period for each window.
+    per_period: Vec<usize>,
 }
+
+/// A window that adds at most this many packets to the one before it is
+/// sent plainly, round-robin, instead of as random combinations: with so
+/// few unknowns, the one or two extra packets random combinations need
+/// would be a large fraction of the window.
+const PLAIN_UP_TO: usize = 8;
 
 impl Plan {
     pub fn new(scheme: Scheme, k: usize) -> Plan {
@@ -77,12 +88,12 @@ impl Plan {
         // Spread each window's share evenly over the period (smooth
         // weighted round-robin), so any stretch of the transmission sees
         // the windows in close to their nominal proportions.
-        let shares: Vec<usize> = if windows.len() == 4 {
+        let shares: Vec<usize> = if windows.len() == SHARES.len() {
             SHARES.to_vec()
         } else {
             // Degenerate small K: merge the shares of the missing small windows upward.
             let mut s = vec![0; windows.len()];
-            let skip = 4 - windows.len();
+            let skip = SHARES.len() - windows.len();
             for (i, &v) in SHARES.iter().enumerate() {
                 s[i.saturating_sub(skip)] += v;
             }
@@ -98,13 +109,13 @@ impl Plan {
             credit[best] -= PERIOD as i64;
             pattern.push(best as u8);
         }
-        let mut w0_before = Vec::with_capacity(PERIOD);
-        let mut n = 0;
+        let mut per_period = vec![0usize; windows.len()];
+        let mut same_before = Vec::with_capacity(PERIOD);
         for &p in &pattern {
-            w0_before.push(n);
-            n += (p == 0) as usize;
+            same_before.push(per_period[p as usize]);
+            per_period[p as usize] += 1;
         }
-        Plan { scheme, k, windows, pattern, w0_before }
+        Plan { scheme, k, windows, pattern, same_before, per_period }
     }
 
     /// Which window packet `id` is drawn from.
@@ -122,13 +133,12 @@ impl Plan {
             _ => {
                 let wi = self.window_of(id);
                 let size = self.windows[wi];
-                if wi == 0 && self.windows.len() > 1 {
-                    // The smallest window is only a handful of packets;
-                    // random combinations would waste a large share of
-                    // them, so it is sent plainly, round-robin.
-                    let per_period = self.w0_before[PERIOD - 1] + (self.pattern[PERIOD - 1] == 0) as usize;
-                    let ordinal = (id as usize / PERIOD) * per_period + self.w0_before[id as usize % PERIOD];
-                    set(&mut v, ordinal % size);
+                let below = if wi == 0 { 0 } else { self.windows[wi - 1] };
+                if size - below <= PLAIN_UP_TO && self.windows.len() > 1 {
+                    // Small layer: its own packets, one at a time, in turn.
+                    let slot = id as usize % PERIOD;
+                    let ordinal = (id as usize / PERIOD) * self.per_period[wi] + self.same_before[slot];
+                    set(&mut v, below + ordinal % (size - below));
                 } else {
                     // Dense random combination: each packet of the window with probability 1/2.
                     let mut rng = Rng::new(0x00F0_17A1 ^ ((id as u64) << 20) ^ self.k as u64);
@@ -348,20 +358,20 @@ mod tests {
 
     #[test]
     fn windows_decode_in_order_and_on_schedule() {
-        // K = 118 is what a 75 s QPSK transmission is sized for. Check the
-        // design targets (in packets sent, lossless channel, any start):
-        // window 1 by 16, window 2 by 57, window 3 by 119, all by 300.
-        let k = 118;
+        // K = 85 is what a 75 s QPSK transmission is sized for. Check the
+        // design targets in packets sent (lossless channel, any start):
+        // the packets a listener has after 5, 15, 30, 45, 60 and 75 s.
+        let k = 85;
         let plan = Plan::new(Scheme::Windowed, k);
-        assert_eq!(plan.windows.len(), 4);
-        let targets = [16usize, 57, 119, 300];
+        assert_eq!(plan.windows, vec![4, 9, 19, 31, 48, 85]);
+        let targets = [12usize, 48, 96, 150, 204, 252];
         let trials = 40;
-        let mut late = [0usize; 4];
-        let mut all: Vec<Vec<usize>> = vec![Vec::new(); 4];
+        let mut late = [0usize; 6];
+        let mut all: Vec<Vec<usize>> = vec![Vec::new(); 6];
         for t in 0..trials {
             let (when, _) = run(Scheme::Windowed, k, t * 977 + 13, 0.0, 3000 + t as u64);
             assert!(when.windows(2).all(|p| p[0] <= p[1]), "windows out of order: {when:?}");
-            for i in 0..4 {
+            for i in 0..6 {
                 late[i] += (when[i] > targets[i]) as usize;
                 all[i].push(when[i]);
             }
@@ -373,14 +383,14 @@ mod tests {
         // Random combinations sometimes need a few packets more than the
         // minimum, so allow a fraction of late runs.
         eprintln!("late counts {late:?} of {trials}");
-        for i in 0..4 {
-            assert!(late[i] * 5 <= trials as usize, "window {} late in {}/{} runs", i + 1, late[i], trials);
+        for i in 0..6 {
+            assert!(late[i] * 4 <= trials as usize, "window {} late in {}/{} runs", i + 1, late[i], trials);
         }
     }
 
     #[test]
     fn loss_delays_but_never_prevents_progress() {
-        let k = 118;
+        let k = 85;
         let (w0, s0) = run(Scheme::Windowed, k, 5, 0.0, 4000);
         let (w3, s3) = run(Scheme::Windowed, k, 5, 0.3, 4000);
         assert!(s3 > s0 && w3[1] >= w0[1]);

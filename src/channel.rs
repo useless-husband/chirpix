@@ -82,13 +82,14 @@ impl Channel {
             ..Channel::clean()
         }
     }
-    /// Noisy, echoing room with clicks and a recorder that drops audio.
+    /// Across a noisy, echoing room (more echo than direct sound), with
+    /// clicks and a recorder that drops audio.
     pub fn poor() -> Channel {
         Channel {
             name: "poor".into(),
             snr_db: Some(8.0),
             rt60: 0.6,
-            drr_db: 2.0,
+            drr_db: -3.0,
             ppm: 130.0,
             band: Some((600.0, 7_500.0)),
             impulses_per_s: 2.0,

@@ -6,6 +6,7 @@
 //! image codec ([`codec`]), and the WAV / PNG / DEFLATE file formats.
 
 pub mod channel;
+pub mod chart;
 pub mod codec;
 pub mod conv;
 pub mod deflate;
@@ -18,6 +19,7 @@ pub mod link;
 pub mod modem;
 pub mod png;
 pub mod rangecoder;
+pub mod report;
 pub mod util;
 pub mod wav;
 pub mod wavelet;
