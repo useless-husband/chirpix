@@ -6,8 +6,10 @@
 //! image codec ([`codec`]), and the WAV / PNG / DEFLATE file formats.
 
 pub mod codec;
+pub mod conv;
 pub mod deflate;
 pub mod fft;
+pub mod fountain;
 pub mod image;
 pub mod png;
 pub mod rangecoder;
