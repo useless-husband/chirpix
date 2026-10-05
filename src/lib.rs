@@ -10,6 +10,7 @@ pub mod codec;
 pub mod conv;
 pub mod deflate;
 pub mod dsp;
+pub mod experiments;
 pub mod fft;
 pub mod fountain;
 pub mod image;

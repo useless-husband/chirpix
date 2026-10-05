@@ -448,34 +448,24 @@ impl Modem {
             }
             base += hop;
         }
-        // Local maxima above the threshold, at least a chirp length apart.
+        // Candidates: points above the threshold that are the largest
+        // within half a chirp length on either side.
         let mut cands = Vec::new();
+        let half = CHIRP_LEN / 2;
         let mut i = 0;
         while i < total {
             if rho[i] as f64 > DETECT_THRESHOLD {
-                let end = (i + CHIRP_LEN).min(total);
-                let (mut best, mut bi) = (rho[i], i);
-                let mut j = i;
-                while j < end || (j < total && rho[j] as f64 > DETECT_THRESHOLD && j < bi + CHIRP_LEN) {
-                    if rho[j] > best {
-                        best = rho[j];
-                        bi = j;
-                    }
-                    j += 1;
+                let (lo, hi) = (i.saturating_sub(half), (i + half + 1).min(total));
+                let best = rho[i];
+                if rho[lo..i].iter().all(|&v| v < best) && rho[i + 1..hi].iter().all(|&v| v <= best) {
+                    // Earliest arrival at least half as strong as the strongest.
+                    let first = (i.saturating_sub(160)..i).find(|&k| rho[k] >= 0.5 * best).unwrap_or(i);
+                    cands.push((first, best as f64));
+                    i += half;
+                    continue;
                 }
-                // Earliest arrival at least half as strong as the strongest.
-                let mut first = bi;
-                for k in bi.saturating_sub(160)..bi {
-                    if rho[k] >= 0.5 * best {
-                        first = k;
-                        break;
-                    }
-                }
-                cands.push((first, best as f64));
-                i = j.max(bi + CHIRP_LEN / 2);
-            } else {
-                i += 1;
             }
+            i += 1;
         }
         cands
     }
@@ -558,14 +548,13 @@ pub struct RxReport {
 }
 
 struct FrameFront {
-    h: Vec<Cpx>,
-    noise: Vec<f64>,
-    d12: f64,
+    y1: Vec<Cpx>,
+    y2: Vec<Cpx>,
     base: usize,
 }
 
 impl Modem {
-    /// Channel estimate from the two training symbols.
+    /// FFTs of the two training symbols, if they look like a training pair.
     fn front(&self, x: &[f32], pos: usize) -> Option<FrameFront> {
         let nominal = pos + CHIRP_LEN + CP;
         if nominal < BACKOFF || nominal - BACKOFF + 2 * NFFT > x.len() {
@@ -583,14 +572,18 @@ impl Modem {
         if pow <= 0.0 || cross.abs() / pow < 0.25 {
             return None;
         }
-        let r: Vec<(usize, Cpx)> = (0..NCAR).map(|c| (FIRST_BIN + c, y2[c] * y1[c].conj())).collect();
-        let d12 = estimate_delay(&r, 0.0, 0.6);
+        Some(FrameFront { y1, y2, base })
+    }
+
+    /// Channel and noise estimate from the training pair, given the
+    /// timing drift `d12` (samples) between its two symbols.
+    fn train_estimate(&self, front: &FrameFront, d12: f64) -> (Vec<Cpx>, Vec<f64>) {
         let mut h = Vec::with_capacity(NCAR);
         let mut raw_noise = Vec::with_capacity(NCAR);
         for c in 0..NCAR {
-            let y2c = y2[c] * Cpx::expj(std::f64::consts::TAU * (FIRST_BIN + c) as f64 * d12 / NFFT as f64);
-            h.push((y1[c] + y2c).scale(0.5) * self.train_car[c].conj());
-            raw_noise.push((y1[c] - y2c).norm2() / 2.0);
+            let y2c = front.y2[c] * Cpx::expj(std::f64::consts::TAU * (FIRST_BIN + c) as f64 * d12 / NFFT as f64);
+            h.push((front.y1[c] + y2c).scale(0.5) * self.train_car[c].conj());
+            raw_noise.push((front.y1[c] - y2c).norm2() / 2.0);
         }
         // One sample per carrier is a very noisy variance estimate; average neighbours.
         let noise = (0..NCAR)
@@ -599,7 +592,7 @@ impl Modem {
                 (raw_noise[lo..hi].iter().sum::<f64>() / (hi - lo) as f64).max(1e-12)
             })
             .collect();
-        Some(FrameFront { h, noise, d12, base })
+        (h, noise)
     }
 
     fn decode_block(&self, spec: &FrameSpec, b: usize, llr_tx: &[f32]) -> (Vec<u8>, Vec<Option<[u8; T]>>) {
@@ -638,24 +631,58 @@ impl Modem {
         let rot = |c: usize, d: f64| Cpx::expj(tau * (FIRST_BIN + c) as f64 * d / NFFT as f64);
         // Offset of a symbol's FFT window from the first training window.
         let off = |sym: usize| 2 * NFFT + CP + sym * SYM;
-        // ---- header: two copies, soft-combined
-        if front.base + off(HDR_SYMS - 1) + NFFT > x.len() {
+        let avail = (0..DATA_SYMS).take_while(|&s| front.base + off(HDR_SYMS + s) + NFFT <= x.len()).count();
+        let nblocks = avail / BLOCK_SYMS;
+        if nblocks == 0 {
             return None;
         }
+        let nsym = nblocks * BLOCK_SYMS;
+        let mut ys: Vec<Vec<Cpx>> = (0..nsym).map(|s| self.analyse(x, front.base + off(HDR_SYMS + s))).collect();
+        // ---- timing drift. The pilots do not depend on the header, so
+        // the clock offset is measured first, over the whole frame: a
+        // constant offset makes the delay a straight line in time.
+        let (h0, noise0) = self.train_estimate(&front, 0.0);
+        let mid = NFFT as f64 / 2.0; // h0 is referenced to the middle of the training pair
+        let (mut sxx, mut sxy) = (0.0, 0.0);
+        let mut prev = 0.0;
+        for (s, y) in ys.iter().enumerate() {
+            let r: Vec<(usize, Cpx)> = (0..NPILOT)
+                .map(|p| {
+                    let c = p * PILOT_STEP + PILOT_STEP / 2;
+                    (FIRST_BIN + c, (y[c] * h0[c].conj()).scale(self.pilot[s][p] / noise0[c]))
+                })
+                .collect();
+            prev = estimate_delay(&r, prev, if s == 0 { 2.5 } else { 0.75 });
+            let t = off(HDR_SYMS + s) as f64 - mid;
+            sxx += t * t;
+            sxy += t * prev;
+        }
+        let slope = sxy / sxx;
+        let (mut h, mut noise) = self.train_estimate(&front, slope * NFFT as f64);
+        for (s, y) in ys.iter_mut().enumerate() {
+            let d = slope * off(HDR_SYMS + s) as f64;
+            for (c, v) in y.iter_mut().enumerate() {
+                *v = *v * rot(c, d);
+            }
+        }
+        // ---- header: two copies, soft-combined
         let mut llr_tx = vec![0f32; 2 * NCAR];
+        let mut yh = Vec::with_capacity(HDR_SYMS);
         for hs in 0..HDR_SYMS {
-            let y = self.analyse(x, front.base + off(hs));
-            let d = front.d12 * off(hs) as f64 / NFFT as f64;
+            let mut y = self.analyse(x, front.base + off(hs));
+            let d = slope * off(hs) as f64;
             let mut l = Vec::with_capacity(2 * NCAR);
             for c in 0..NCAR {
+                y[c] = y[c] * rot(c, d);
                 let sign = if hs == 1 { self.hdr_sign[c] } else { 1.0 };
-                let hp = front.h[c].norm2().max(1e-18);
-                let z = (y[c] * rot(c, d) * front.h[c].conj()).scale(sign / hp);
-                Constellation::Qpsk.llr(z, hp / front.noise[c], &mut l);
+                let hp = h[c].norm2().max(1e-18);
+                let z = (y[c] * h[c].conj()).scale(sign / hp);
+                Constellation::Qpsk.llr(z, hp / noise[c], &mut l);
             }
             for (a, b) in llr_tx.iter_mut().zip(&l) {
                 *a += b;
             }
+            yh.push(y);
         }
         let mut llr = vec![0f32; 2 * NCAR];
         for (i, l) in llr.iter_mut().enumerate() {
@@ -664,43 +691,18 @@ impl Modem {
         let hdr_bits = conv::viterbi(&llr, HDR_INFO_BITS);
         let spec = FrameSpec::parse(&bits_to_bytes(&hdr_bits[..(HDR_BYTES + 2) * 8]))?;
         let cons = spec.cons;
-        // ---- data symbols: FFT, then track the timing drift with the pilots
-        let avail = (0..DATA_SYMS).take_while(|&s| front.base + off(HDR_SYMS + s) + NFFT <= x.len()).count();
-        let nblocks = avail / BLOCK_SYMS;
-        let nsym = nblocks * BLOCK_SYMS;
-        let mut ys: Vec<Vec<Cpx>> = (0..nsym).map(|s| self.analyse(x, front.base + off(HDR_SYMS + s))).collect();
-        let mut raw = Vec::with_capacity(nsym);
-        let mut prev = front.d12 * off(HDR_SYMS) as f64 / NFFT as f64;
-        for (s, y) in ys.iter().enumerate() {
-            let r: Vec<(usize, Cpx)> = (0..NPILOT)
-                .map(|p| {
-                    let c = p * PILOT_STEP + PILOT_STEP / 2;
-                    (FIRST_BIN + c, (y[c] * front.h[c].conj()).scale(self.pilot[s][p] / front.noise[c]))
-                })
-                .collect();
-            prev = estimate_delay(&r, prev, 0.75);
-            raw.push(prev);
-        }
-        // The drift is a straight line in time (constant clock offset):
-        // fit it, anchored at zero offset at the training symbol.
-        let (mut sxx, mut sxy) = (0.0, 0.0);
-        for (s, &d) in raw.iter().enumerate() {
-            let t = off(HDR_SYMS + s) as f64;
-            sxx += t * t;
-            sxy += t * d;
-        }
-        let slope = if sxx > 0.0 { sxy / sxx } else { front.d12 / NFFT as f64 };
-        for (s, y) in ys.iter_mut().enumerate() {
-            let d = slope * off(HDR_SYMS + s) as f64;
-            for (c, v) in y.iter_mut().enumerate() {
-                *v = *v * rot(c, d);
-            }
+        // The header passed its CRC, so its two symbols are now known and
+        // double the amount of training.
+        let hdr_car = self.header_carriers(&spec);
+        let h_train = h.clone();
+        for c in 0..NCAR {
+            let a = yh[0][c] * hdr_car[c].conj();
+            let b = yh[1][c] * hdr_car[c].conj().scale(self.hdr_sign[c]);
+            h[c] = (h_train[c].scale(2.0) + a + b).scale(0.25);
         }
         // Effective noise per carrier from the pilot residuals (this also
         // contains channel-estimate error and inter-symbol interference).
-        let mut h = front.h.clone();
-        let mut noise = front.noise.clone();
-        if nsym > 0 {
+        {
             let pv: Vec<f64> = (0..NPILOT)
                 .map(|p| {
                     let c = p * PILOT_STEP + PILOT_STEP / 2;
@@ -746,8 +748,8 @@ impl Modem {
         // symbols; use them as extra training and retry the failed blocks.
         let good: Vec<bool> = results.iter().map(|r| r.1.iter().all(|p| p.is_some())).collect();
         if !opts.no_refine && good.iter().any(|&g| g) && good.iter().any(|&g| !g) {
-            let mut num: Vec<Cpx> = h.iter().map(|v| v.scale(2.0)).collect();
-            let mut den = vec![2.0f64; NCAR];
+            let mut num: Vec<Cpx> = h.iter().map(|v| v.scale(4.0)).collect();
+            let mut den = vec![4.0f64; NCAR];
             let mut known: Vec<(usize, Vec<Cpx>)> = Vec::new();
             for b in 0..nblocks {
                 let pts = if good[b] { Some(self.block_points(cons, &results[b].0)) } else { None };
