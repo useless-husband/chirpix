@@ -5,6 +5,7 @@
 //! expanding-window fountain code ([`fountain`]), the progressive wavelet
 //! image codec ([`codec`]), and the WAV / PNG / DEFLATE file formats.
 
+pub mod channel;
 pub mod codec;
 pub mod conv;
 pub mod deflate;
@@ -12,6 +13,7 @@ pub mod dsp;
 pub mod fft;
 pub mod fountain;
 pub mod image;
+pub mod link;
 pub mod modem;
 pub mod png;
 pub mod rangecoder;
