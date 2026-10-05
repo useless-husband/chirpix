@@ -278,7 +278,7 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Direct-to-reverberant ratio",
         "DRR (dB)",
         "SNR 25 dB, RT60 0.5 s. Lower DRR means more of the sound arrives as echo.",
-        [15.0, 10.0, 6.0, 3.0, 0.0, -3.0, -6.0]
+        [10.0, 5.0, 0.0, -3.0, -6.0, -10.0, -15.0]
             .iter()
             .map(|&d| {
                 (
@@ -298,8 +298,8 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
     out.push(sweep(
         "Reverberation time",
         "RT60 (s)",
-        "SNR 25 dB, DRR 3 dB.",
-        [0.1, 0.2, 0.3, 0.5, 0.8, 1.2]
+        "SNR 25 dB, DRR 0 dB (as much echo as direct sound).",
+        [0.2, 0.3, 0.5, 0.8, 1.2, 2.0]
             .iter()
             .map(|&r| {
                 (
@@ -307,7 +307,7 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
                     format!("{r:.1}"),
                     Channel {
                         rt60: r,
-                        drr_db: 3.0,
+                        drr_db: 0.0,
                         ..Channel::awgn(25.0, 104)
                     },
                 )
