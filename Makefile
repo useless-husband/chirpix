@@ -10,7 +10,7 @@ KODAK := data/kodim23.png data/kodim19.png data/kodim05.png data/kodim08.png
 build:
 	$(CARGO) build --release -j $(JOBS)
 
-# Unit tests plus the end-to-end tests through the simulated channel (about 15 s).
+# Unit tests plus the end-to-end tests through the simulated channel (a few seconds once compiled).
 test:
 	$(CARGO) test --release -j $(JOBS)
 
@@ -37,7 +37,7 @@ report: build
 
 # Real audio stack, no sound: play into and record from the BlackHole virtual device.
 loopback: build
-	sh scripts/loopback.sh
+	sh scripts/loopback.sh || [ $$? -eq 77 ]
 
 clean:
 	$(CARGO) clean

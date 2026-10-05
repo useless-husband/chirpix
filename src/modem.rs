@@ -1180,6 +1180,39 @@ mod tests {
     }
 
     #[test]
+    fn chirp_like_sounds_just_before_a_frame_do_not_hide_it() {
+        // Regression: two weaker chirps 1030 and 300 samples before the
+        // real one used to make the peak picker step over the real one,
+        // and a candidate a few milliseconds early used to decode the
+        // header and then block the real frame.
+        let m = modem();
+        let fl = m.frame_len();
+        let mut audio = vec![0f32; 3000];
+        for counter in 0..2 {
+            audio.extend(m.modulate_frame(&spec(Constellation::Qpsk, counter), &test_packets(6, counter as u64)));
+        }
+        audio.extend(vec![0f32; 3000]);
+        let second = 3000 + fl;
+        for (back, gain) in [(1030usize, 0.5f32), (300, 0.8)] {
+            for (i, c) in m.chirp.iter().enumerate() {
+                audio[second - back + i] += gain * c;
+            }
+        }
+        let rep = m.demodulate(&audio, &RxOptions::default());
+        let f = rep.frames.iter().find(|f| f.spec.counter == 1).expect("second frame must be found");
+        // The nearer false chirp is strong enough to be taken for an
+        // earlier arrival of the real one, which the cyclic prefix absorbs;
+        // what matters is that the frame is found there and decodes.
+        let early = second as i64 - f.start as i64;
+        assert!(
+            (-64..=512).contains(&early),
+            "second frame located at {} instead of {second}",
+            f.start
+        );
+        assert!(f.packet_ok.iter().all(|&ok| ok), "{:?}", f.packet_ok);
+    }
+
+    #[test]
     fn arbitrary_slices_and_damage_never_panic_or_yield_wrong_packets() {
         let m = modem();
         let mut audio = Vec::new();

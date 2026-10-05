@@ -60,7 +60,7 @@ with other jobs), which writes a self-contained `out/report/report.html`.
 
 ```
 make build          # needs Rust 1.82+ (https://rustup.rs)
-make test           # 73 tests, about 15 s
+make test           # 74 tests, a few seconds once compiled
 make demo           # small report on built-in pictures -> out/demo/report.html
 make data report    # four Kodak photographs (2.8 MB, SHA-256 checked) and the full report
 ```

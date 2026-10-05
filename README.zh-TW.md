@@ -51,7 +51,7 @@
 
 ```
 make build          # 需要 Rust 1.82 以上（https://rustup.rs）
-make test           # 73 個測試，約 15 秒
+make test           # 74 個測試，編譯完之後幾秒鐘
 make demo           # 用內建測試圖做小報告 -> out/demo/report.html
 make data report    # 下載四張柯達照片（2.8 MB，有 SHA-256 檢查）並做完整報告
 ```

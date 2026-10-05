@@ -9,6 +9,8 @@
 // the loopback test sends audio through a virtual device ("BlackHole 2ch")
 // without making a sound.
 //
+// Needs macOS 14 or later (for the capture device types used below).
+//
 // Exit codes: 0 ok, 2 bad arguments or files, 3 no microphone permission,
 // 4 device not found or could not be selected.
 

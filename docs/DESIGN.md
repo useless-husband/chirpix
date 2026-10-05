@@ -122,13 +122,19 @@ outside the search range.
 ### Hard problem 3: false starts
 
 Random data occasionally correlates with the chirp above the detection threshold (about once per frame).
-Two bugs came from this and both now have regression tests:
+Two bugs came from this:
 
 - The first peak-picker skipped a stretch of the correlation after each candidate; a false candidate just
   before a real chirp could hide it. Candidates are now local maxima within half a chirp length.
 - With the long cyclic prefix and the heavily repeated header, a false candidate a few milliseconds before
   a real chirp decoded the *header* correctly and then blocked the real frame. Candidates are now tried
   strongest first, and an accepted frame rules out any candidate that would overlap it.
+
+Tests: the clean loopback over every numerology reproduces the second bug deterministically; for the first,
+`chirp_like_sounds_just_before_a_frame_do_not_hide_it` plants false chirps in front of a frame, and the
+white-noise test fails if any of its frames is missed. In the report's error-rate runs (170 frames per
+point) no frame is missed at any point where the coded error rate is zero, which is every point from 5 dB
+(QPSK) and 12 dB (16-QAM) up.
 
 ### Hard problem 4: one training symbol is a noisy ruler
 
