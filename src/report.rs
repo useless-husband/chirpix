@@ -25,7 +25,7 @@ pub struct ReportOutput {
 
 /// Receiver SNR above which the sender should use 16-QAM (see the
 /// "choosing the constellation" section of the report).
-pub const QAM16_MIN_SNR_DB: f64 = 13.0;
+pub const QAM16_MIN_SNR_DB: f64 = 12.0;
 
 pub fn recommend(snr_db: f64) -> Constellation {
     if snr_db >= QAM16_MIN_SNR_DB {
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn rule_switches_at_the_threshold() {
-        assert_eq!(recommend(12.9), Constellation::Qpsk);
-        assert_eq!(recommend(13.0), Constellation::Qam16);
+        assert_eq!(recommend(11.9), Constellation::Qpsk);
+        assert_eq!(recommend(12.0), Constellation::Qam16);
     }
 }
