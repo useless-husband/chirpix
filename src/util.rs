@@ -23,7 +23,7 @@ impl Rng {
     }
     /// Uniform integer in [0, n).
     pub fn below(&mut self, n: usize) -> usize {
-        ((self.next_u64() >> 32) * n as u64 >> 32) as usize
+        (((self.next_u64() >> 32) * n as u64) >> 32) as usize
     }
     pub fn bit(&mut self) -> u8 {
         (self.next_u64() >> 63) as u8
@@ -118,8 +118,7 @@ pub fn erfc(x: f64) -> f64 {
         + t * (1.00002368
             + t * (0.37409196
                 + t * (0.09678418
-                    + t * (-0.18628806
-                        + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277))))))));
+                    + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277))))))));
     let ans = t * poly.exp();
     if x >= 0.0 {
         ans
@@ -172,7 +171,13 @@ mod tests {
     #[test]
     fn q_function_matches_table() {
         // Values from standard normal tables.
-        for (x, q) in [(0.0, 0.5), (1.0, 0.158_655_25), (2.0, 0.022_750_13), (3.0, 1.349_898e-3), (4.0, 3.167_124e-5)] {
+        for (x, q) in [
+            (0.0, 0.5),
+            (1.0, 0.158_655_25),
+            (2.0, 0.022_750_13),
+            (3.0, 1.349_898e-3),
+            (4.0, 3.167_124e-5),
+        ] {
             assert!((q_func(x) / q - 1.0).abs() < 1e-5, "Q({x})");
         }
     }

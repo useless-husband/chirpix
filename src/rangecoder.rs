@@ -18,7 +18,10 @@ pub struct Prob {
 
 impl Default for Prob {
     fn default() -> Self {
-        Prob { fast: 1 << 15, slow: 1 << 15 }
+        Prob {
+            fast: 1 << 15,
+            slow: 1 << 15,
+        }
     }
 }
 
@@ -55,7 +58,13 @@ impl Default for Encoder {
 
 impl Encoder {
     pub fn new() -> Self {
-        Encoder { low: 0, range: 0xFFFF_FFFF, cache: 0, cache_size: 1, out: Vec::new() }
+        Encoder {
+            low: 0,
+            range: 0xFFFF_FFFF,
+            cache: 0,
+            cache_size: 1,
+            out: Vec::new(),
+        }
     }
 
     #[inline]
@@ -112,7 +121,13 @@ pub struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        let mut d = Decoder { data, pos: 0, range: 0xFFFF_FFFF, code: 0, exhausted: false };
+        let mut d = Decoder {
+            data,
+            pos: 0,
+            range: 0xFFFF_FFFF,
+            code: 0,
+            exhausted: false,
+        };
         for _ in 0..5 {
             d.code = (d.code << 8) | d.next() as u32;
         }

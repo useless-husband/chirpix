@@ -24,7 +24,12 @@ pub struct TxConfig {
 
 impl TxConfig {
     pub fn new(cons: Constellation, scheme: Scheme) -> TxConfig {
-        TxConfig { cons, scheme, design_seconds: 75.0, k: None }
+        TxConfig {
+            cons,
+            scheme,
+            design_seconds: 75.0,
+            k: None,
+        }
     }
 
     /// Whole frames a listener gets in the design time, assuming the
@@ -58,7 +63,12 @@ impl Transmission {
         let stream = codec::encode(img, budget);
         let encoder = Encoder::new(cfg.scheme, &stream);
         let session = (crc32(&stream) & 0xFF) as u8;
-        Transmission { cfg: *cfg, stream, encoder, session }
+        Transmission {
+            cfg: *cfg,
+            stream,
+            encoder,
+            session,
+        }
     }
 
     pub fn k(&self) -> usize {
@@ -73,8 +83,9 @@ impl Transmission {
             counter: counter & 0xFF_FFFF,
             k: self.k() as u16,
         };
-        let packets: Vec<[u8; T]> =
-            (0..self.cfg.cons.packets_per_frame()).map(|i| self.encoder.packet(spec.packet_id(i))).collect();
+        let packets: Vec<[u8; T]> = (0..self.cfg.cons.packets_per_frame())
+            .map(|i| self.encoder.packet(spec.packet_id(i)))
+            .collect();
         modem().modulate_frame(&spec, &packets)
     }
 
@@ -108,10 +119,18 @@ pub fn receive_recording(samples: &[f32], rate: u32, opts: &RxOptions) -> Recept
     // If two transmissions are present, follow the one with more frames.
     let mut counts: std::collections::HashMap<(u8, u8, u16, u8), usize> = Default::default();
     for f in &report.frames {
-        *counts.entry((f.spec.session, f.spec.scheme, f.spec.k, f.spec.cons as u8)).or_default() += 1;
+        *counts
+            .entry((f.spec.session, f.spec.scheme, f.spec.k, f.spec.cons as u8))
+            .or_default() += 1;
     }
     let key = counts.iter().max_by_key(|(k, n)| (**n, **k)).map(|(k, _)| *k);
-    let spec = key.and_then(|k| report.frames.iter().map(|f| f.spec).find(|s| (s.session, s.scheme, s.k, s.cons as u8) == k));
+    let spec = key.and_then(|k| {
+        report
+            .frames
+            .iter()
+            .map(|f| f.spec)
+            .find(|s| (s.session, s.scheme, s.k, s.cons as u8) == k)
+    });
     let mut packets = Vec::new();
     if let Some(s) = spec {
         let ppf = s.cons.packets_per_frame() as u32;
@@ -128,7 +147,13 @@ pub fn receive_recording(samples: &[f32], rate: u32, opts: &RxOptions) -> Recept
         }
     }
     packets.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    Reception { report, ppm, spec, packets, duration: samples.len() as f64 / rate as f64 }
+    Reception {
+        report,
+        ppm,
+        spec,
+        packets,
+        duration: samples.len() as f64 / rate as f64,
+    }
 }
 
 #[derive(Clone)]
@@ -150,7 +175,14 @@ impl Reception {
         let Some(spec) = self.spec else {
             return times
                 .iter()
-                .map(|&time| Snapshot { time, packets: 0, rank: 0, prefix_bytes: 0, complete: false, image: None })
+                .map(|&time| Snapshot {
+                    time,
+                    packets: 0,
+                    rank: 0,
+                    prefix_bytes: 0,
+                    complete: false,
+                    image: None,
+                })
                 .collect();
         };
         let scheme = Scheme::from_u8(spec.scheme).unwrap_or(Scheme::Windowed);
@@ -178,7 +210,14 @@ impl Reception {
                 }
             };
             last = Some((usable, image.clone()));
-            out.push(Snapshot { time, packets: next, rank: dec.rank(), prefix_bytes: usable * T, complete, image });
+            out.push(Snapshot {
+                time,
+                packets: next,
+                rank: dec.rank(),
+                prefix_bytes: usable * T,
+                complete,
+                image,
+            });
         }
         out
     }
@@ -209,7 +248,10 @@ mod tests {
         let rec = receive_recording(&audio[20_000..], FS, &RxOptions::default());
         assert_eq!(rec.spec.unwrap().k as usize, tx.k());
         let snaps = rec.snapshots(&[4.0, 8.0, 14.0, 25.0], false);
-        let q: Vec<f64> = snaps.iter().map(|s| s.image.as_ref().map(|i| psnr(&img, i)).unwrap_or(0.0)).collect();
+        let q: Vec<f64> = snaps
+            .iter()
+            .map(|s| s.image.as_ref().map(|i| psnr(&img, i)).unwrap_or(0.0))
+            .collect();
         assert!(q[0] > 10.0, "a first picture within 4 s: {q:?}");
         assert!(q.windows(2).all(|p| p[1] >= p[0]), "quality must not fall: {q:?}");
         assert!(snaps[3].complete, "complete a little after the design time");

@@ -39,7 +39,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
             return Err("PNG chunk runs past end of file".into());
         }
         let body = &bytes[pos + 8..pos + 8 + len];
-        let crc = u32::from_be_bytes([bytes[pos + 8 + len], bytes[pos + 9 + len], bytes[pos + 10 + len], bytes[pos + 11 + len]]);
+        let crc = u32::from_be_bytes([
+            bytes[pos + 8 + len],
+            bytes[pos + 9 + len],
+            bytes[pos + 10 + len],
+            bytes[pos + 11 + len],
+        ]);
         if crc32_update(crc32(kind), body) != crc {
             return Err("PNG chunk CRC mismatch".into());
         }
@@ -171,7 +176,11 @@ pub fn encode(img: &Image) -> Vec<u8> {
     let mut best = vec![0u8; stride];
     for y in 0..h {
         let cur = &img.data[y * stride..(y + 1) * stride];
-        let prev = if y > 0 { &img.data[(y - 1) * stride..y * stride] } else { &zero[..] };
+        let prev = if y > 0 {
+            &img.data[(y - 1) * stride..y * stride]
+        } else {
+            &zero[..]
+        };
         let (mut best_ft, mut best_cost) = (0u8, u64::MAX);
         for ft in 0..5u8 {
             let mut cost = 0u64;
@@ -226,7 +235,10 @@ mod tests {
 
     #[test]
     fn round_trip_is_lossless() {
-        for (i, img) in [synthetic("scene", 97, 61), synthetic("chart", 64, 64), synthetic("clouds", 33, 130)].iter().enumerate() {
+        for (i, img) in [synthetic("scene", 97, 61), synthetic("chart", 64, 64), synthetic("clouds", 33, 130)]
+            .iter()
+            .enumerate()
+        {
             let png = encode(img);
             let back = decode(&png).unwrap();
             assert_eq!((back.w, back.h), (img.w, img.h), "image {i}");
@@ -238,10 +250,10 @@ mod tests {
     fn reads_a_png_written_by_another_encoder() {
         // 2x2 RGB PNG produced by Python's zlib/struct (rows: red, green / blue, white), filter 0.
         let png: [u8; 75] = [
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
-            0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a, 0x73, 0x00, 0x00, 0x00, 0x12, 0x49,
-            0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xc0, 0x00, 0xc2, 0x0c, 0xff, 0x81, 0x00, 0x00, 0x1f, 0xee,
-            0x05, 0xfb, 0xf1, 0xab, 0xba, 0x77, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00,
+            0x00, 0x00, 0x02, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a, 0x73, 0x00, 0x00, 0x00, 0x12, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xc0, 0x00, 0xc2, 0x0c, 0xff, 0x81, 0x00, 0x00, 0x1f, 0xee, 0x05, 0xfb, 0xf1, 0xab, 0xba, 0x77,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
         let img = decode(&png).unwrap();
         assert_eq!((img.w, img.h), (2, 2));

@@ -146,7 +146,13 @@ impl<C: BitIo> Coder<C> {
                         bitlen.push(cur);
                     }
                 }
-                bands.push(Band { sb, comp, dims, nodesig, bitlen });
+                bands.push(Band {
+                    sb,
+                    comp,
+                    dims,
+                    nodesig,
+                    bitlen,
+                });
             }
         }
         Coder {
@@ -350,7 +356,10 @@ pub fn encode(img: &Image, max_bytes: usize) -> Vec<u8> {
     // Encode a little past the budget and cut: the result is then a true
     // prefix of a longer stream, so the decoder's "stop when the bytes run
     // out" rule never sees symbols the encoder did not write.
-    let io = EncIo { enc: Encoder::new(), stop_at: body_budget + 16 };
+    let io = EncIo {
+        enc: Encoder::new(),
+        stop_at: body_budget + 16,
+    };
     let mut coder = Coder::new(io, w, h, levels, Some(mags), Some(negs));
     let _ = coder.run(top_plane);
     let mut body = coder.io.enc.finish();
@@ -376,7 +385,9 @@ pub fn decode(stream: &[u8]) -> Option<Image> {
     let levels = stream[3] as usize;
     let top_plane = stream[8] as u32;
     let end = stream.len().min(inf.total_len);
-    let io = DecIo { dec: Decoder::new(&stream[HEADER_LEN..end]) };
+    let io = DecIo {
+        dec: Decoder::new(&stream[HEADER_LEN..end]),
+    };
     let mut coder = Coder::new(io, w, h, levels, None, None);
     let _ = coder.run(top_plane);
     let n = w * h;

@@ -83,10 +83,18 @@ pub fn viterbi(llr: &[f32], nbits: usize) -> Vec<u8> {
 /// code with antipodal signalling in white Gaussian noise. Uses the
 /// published information-weight spectrum (d = 10, 12, ..., 20).
 pub fn union_bound_ber(ebn0_db: f64) -> f64 {
-    const CD: [(f64, f64); 6] =
-        [(10.0, 36.0), (12.0, 211.0), (14.0, 1404.0), (16.0, 11633.0), (18.0, 77433.0), (20.0, 502_690.0)];
+    const CD: [(f64, f64); 6] = [
+        (10.0, 36.0),
+        (12.0, 211.0),
+        (14.0, 1404.0),
+        (16.0, 11633.0),
+        (18.0, 77433.0),
+        (20.0, 502_690.0),
+    ];
     let ebn0 = 10f64.powf(ebn0_db / 10.0);
-    CD.iter().map(|&(d, c)| c * crate::util::q_func((2.0 * d * 0.5 * ebn0).sqrt())).sum()
+    CD.iter()
+        .map(|&(d, c)| c * crate::util::q_func((2.0 * d * 0.5 * ebn0).sqrt()))
+        .sum()
 }
 
 #[cfg(test)]
@@ -126,7 +134,9 @@ mod tests {
         // For 8-bit messages compare against brute force over all 256 codewords.
         let mut rng = Rng::new(62);
         let n = 8;
-        let book: Vec<Vec<u8>> = (0..256u32).map(|m| encode(&(0..n).map(|i| ((m >> i) & 1) as u8).collect::<Vec<_>>())).collect();
+        let book: Vec<Vec<u8>> = (0..256u32)
+            .map(|m| encode(&(0..n).map(|i| ((m >> i) & 1) as u8).collect::<Vec<_>>()))
+            .collect();
         for trial in 0..400 {
             let llr: Vec<f32> = (0..2 * (n + TAIL)).map(|_| rng.gauss() as f32).collect();
             let score = |cw: &[u8]| -> f32 { cw.iter().zip(&llr).map(|(&c, &l)| if c == 0 { l } else { -l }).sum() };
@@ -164,8 +174,10 @@ mod tests {
             let (mut errs, mut total) = (0usize, 0usize);
             for _ in 0..blocks {
                 let bits: Vec<u8> = (0..1000).map(|_| rng.bit()).collect();
-                let llr: Vec<f32> =
-                    encode(&bits).iter().map(|&c| ((1.0 - 2.0 * c as f64) + sigma * rng.gauss()) as f32).collect();
+                let llr: Vec<f32> = encode(&bits)
+                    .iter()
+                    .map(|&c| ((1.0 - 2.0 * c as f64) + sigma * rng.gauss()) as f32)
+                    .collect();
                 let dec = viterbi(&llr, 1000);
                 errs += dec.iter().zip(&bits).filter(|(a, b)| a != b).count();
                 total += 1000;
@@ -173,7 +185,10 @@ mod tests {
             let ber = errs as f64 / total as f64;
             let bound = union_bound_ber(ebn0_db);
             eprintln!("Eb/N0 {ebn0_db} dB: BER {ber:.2e}, union bound {bound:.2e}");
-            assert!(ber < bound * 1.35 && ber > bound / 6.0, "Eb/N0 {ebn0_db}: BER {ber:.2e} vs bound {bound:.2e}");
+            assert!(
+                ber < bound * 1.35 && ber > bound / 6.0,
+                "Eb/N0 {ebn0_db}: BER {ber:.2e} vs bound {bound:.2e}"
+            );
         }
     }
 }

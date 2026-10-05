@@ -13,7 +13,13 @@ pub struct Series {
 
 impl Series {
     pub fn new(name: &str, slot: usize, points: Vec<(f64, f64)>) -> Series {
-        Series { name: name.into(), points, slot, dashed: false, markers: true }
+        Series {
+            name: name.into(),
+            points,
+            slot,
+            dashed: false,
+            markers: true,
+        }
     }
     pub fn dashed(mut self) -> Series {
         self.dashed = true;
@@ -54,14 +60,21 @@ impl Chart {
 }
 
 pub fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
     let span = (hi - lo).max(1e-12);
     let raw = span / target as f64;
     let mag = 10f64.powf(raw.log10().floor());
-    let step = [1.0, 2.0, 2.5, 5.0, 10.0].iter().map(|m| m * mag).find(|s| span / s <= target as f64 + 0.5).unwrap_or(10.0 * mag);
+    let step = [1.0, 2.0, 2.5, 5.0, 10.0]
+        .iter()
+        .map(|m| m * mag)
+        .find(|s| span / s <= target as f64 + 0.5)
+        .unwrap_or(10.0 * mag);
     let mut t = (lo / step).ceil() * step;
     let mut out = Vec::new();
     while t <= hi + step * 1e-6 {
@@ -103,11 +116,21 @@ pub fn legend(series: &[Series]) -> String {
     let mut s = String::from("<div class=\"legend\">");
     for se in series {
         let line = if se.dashed {
-            format!("<line class=\"l s{}\" x1=\"0\" y1=\"7\" x2=\"26\" y2=\"7\" stroke-dasharray=\"5 4\"/>", se.slot)
+            format!(
+                "<line class=\"l s{}\" x1=\"0\" y1=\"7\" x2=\"26\" y2=\"7\" stroke-dasharray=\"5 4\"/>",
+                se.slot
+            )
         } else {
-            format!("<line class=\"l s{}\" x1=\"0\" y1=\"7\" x2=\"26\" y2=\"7\"/>{}", se.slot, if se.markers { marker(se.slot, 13.0, 7.0) } else { String::new() })
+            format!(
+                "<line class=\"l s{}\" x1=\"0\" y1=\"7\" x2=\"26\" y2=\"7\"/>{}",
+                se.slot,
+                if se.markers { marker(se.slot, 13.0, 7.0) } else { String::new() }
+            )
         };
-        s += &format!("<span><svg width=\"26\" height=\"14\" aria-hidden=\"true\">{line}</svg>{}</span>", esc(&se.name));
+        s += &format!(
+            "<span><svg width=\"26\" height=\"14\" aria-hidden=\"true\">{line}</svg>{}</span>",
+            esc(&se.name)
+        );
     }
     s + "</div>"
 }
@@ -116,7 +139,12 @@ pub fn render(ch: &Chart) -> String {
     let (w, h) = (ch.width, ch.height);
     let (ml, mr, mt, mb) = (56.0, 14.0, 10.0, 42.0);
     let (pw, ph) = (w - ml - mr, h - mt - mb);
-    let all: Vec<(f64, f64)> = ch.series.iter().flat_map(|s| s.points.iter().copied()).filter(|p| p.0.is_finite() && p.1.is_finite()).collect();
+    let all: Vec<(f64, f64)> = ch
+        .series
+        .iter()
+        .flat_map(|s| s.points.iter().copied())
+        .filter(|p| p.0.is_finite() && p.1.is_finite())
+        .collect();
     let (mut x0, mut x1) = all.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
     if all.is_empty() || x0 == x1 {
         x0 -= 1.0;
@@ -126,7 +154,10 @@ pub fn render(ch: &Chart) -> String {
     let (y0, y1) = match ch.y_range {
         Some((a, b)) => (ty(a), ty(b)),
         None => {
-            let (lo, hi) = all.iter().filter(|p| !ch.log_y || p.1 > 0.0).fold((f64::MAX, f64::MIN), |a, p| (a.0.min(ty(p.1)), a.1.max(ty(p.1))));
+            let (lo, hi) = all
+                .iter()
+                .filter(|p| !ch.log_y || p.1 > 0.0)
+                .fold((f64::MAX, f64::MIN), |a, p| (a.0.min(ty(p.1)), a.1.max(ty(p.1))));
             if lo > hi {
                 (0.0, 1.0)
             } else if ch.log_y {
@@ -146,7 +177,11 @@ pub fn render(ch: &Chart) -> String {
         esc(&ch.title)
     );
     // grid and y ticks
-    let yticks: Vec<f64> = if ch.log_y { (y0.ceil() as i32..=y1.floor() as i32).map(|e| e as f64).collect() } else { nice_ticks(y0, y1, 5) };
+    let yticks: Vec<f64> = if ch.log_y {
+        (y0.ceil() as i32..=y1.floor() as i32).map(|e| e as f64).collect()
+    } else {
+        nice_ticks(y0, y1, 5)
+    };
     for t in &yticks {
         let y = mt + ph - (t - y0) / (y1 - y0) * ph;
         let label = if ch.log_y { format!("1e{}", *t as i32) } else { fmt_num(*t) };
@@ -157,20 +192,58 @@ pub fn render(ch: &Chart) -> String {
         let x = sx(*t);
         s += &format!("<line class=\"axis\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{:.1}\" y2=\"{:.1}\"/><text class=\"tick\" x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text>", mt + ph, mt + ph + 4.0, mt + ph + 17.0, fmt_num(*t));
     }
-    s += &format!("<line class=\"axis\" x1=\"{ml}\" x2=\"{:.1}\" y1=\"{:.1}\" y2=\"{:.1}\"/>", ml + pw, mt + ph, mt + ph);
-    s += &format!("<text class=\"label\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text>", ml + pw / 2.0, h - 6.0, esc(&ch.x_label));
-    s += &format!("<text class=\"label\" transform=\"translate(13 {:.1}) rotate(-90)\" text-anchor=\"middle\">{}</text>", mt + ph / 2.0, esc(&ch.y_label));
+    s += &format!(
+        "<line class=\"axis\" x1=\"{ml}\" x2=\"{:.1}\" y1=\"{:.1}\" y2=\"{:.1}\"/>",
+        ml + pw,
+        mt + ph,
+        mt + ph
+    );
+    s += &format!(
+        "<text class=\"label\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text>",
+        ml + pw / 2.0,
+        h - 6.0,
+        esc(&ch.x_label)
+    );
+    s += &format!(
+        "<text class=\"label\" transform=\"translate(13 {:.1}) rotate(-90)\" text-anchor=\"middle\">{}</text>",
+        mt + ph / 2.0,
+        esc(&ch.y_label)
+    );
     for se in &ch.series {
-        let pts: Vec<(f64, f64)> = se.points.iter().copied().filter(|p| p.0.is_finite() && p.1.is_finite() && (!ch.log_y || p.1 > 0.0)).collect();
+        let pts: Vec<(f64, f64)> = se
+            .points
+            .iter()
+            .copied()
+            .filter(|p| p.0.is_finite() && p.1.is_finite() && (!ch.log_y || p.1 > 0.0))
+            .collect();
         if pts.is_empty() {
             continue;
         }
-        let path: Vec<String> = pts.iter().enumerate().map(|(i, p)| format!("{}{:.1} {:.1}", if i == 0 { "M" } else { "L" }, sx(p.0), sy(p.1))).collect();
-        s += &format!("<path class=\"l s{}\" d=\"{}\"{}/>", se.slot, path.join(" "), if se.dashed { " stroke-dasharray=\"5 4\"" } else { "" });
+        let path: Vec<String> = pts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!("{}{:.1} {:.1}", if i == 0 { "M" } else { "L" }, sx(p.0), sy(p.1)))
+            .collect();
+        s += &format!(
+            "<path class=\"l s{}\" d=\"{}\"{}/>",
+            se.slot,
+            path.join(" "),
+            if se.dashed { " stroke-dasharray=\"5 4\"" } else { "" }
+        );
         if se.markers {
             for p in &pts {
-                let tip = if ch.log_y { format!("{:.2e}", p.1) } else { format!("{:.*}", ch.decimals, p.1) };
-                s += &format!("<g>{}<title>{}: {} at {}</title></g>", marker(se.slot, sx(p.0), sy(p.1)), esc(&se.name), tip, fmt_num(p.0));
+                let tip = if ch.log_y {
+                    format!("{:.2e}", p.1)
+                } else {
+                    format!("{:.*}", ch.decimals, p.1)
+                };
+                s += &format!(
+                    "<g>{}<title>{}: {} at {}</title></g>",
+                    marker(se.slot, sx(p.0), sy(p.1)),
+                    esc(&se.name),
+                    tip,
+                    fmt_num(p.0)
+                );
             }
         }
     }

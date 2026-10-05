@@ -115,7 +115,14 @@ impl Plan {
             same_before.push(per_period[p as usize]);
             per_period[p as usize] += 1;
         }
-        Plan { scheme, k, windows, pattern, same_before, per_period }
+        Plan {
+            scheme,
+            k,
+            windows,
+            pattern,
+            same_before,
+            per_period,
+        }
     }
 
     /// Which window packet `id` is drawn from.
@@ -173,7 +180,10 @@ impl Encoder {
         for (i, chunk) in data.chunks(T).enumerate() {
             source[i][..chunk.len()].copy_from_slice(chunk);
         }
-        Encoder { plan: Plan::new(scheme, k), source }
+        Encoder {
+            plan: Plan::new(scheme, k),
+            source,
+        }
     }
 
     pub fn packet(&self, id: u32) -> [u8; T] {
@@ -209,7 +219,12 @@ pub struct Decoder {
 impl Decoder {
     pub fn new(plan: Plan) -> Decoder {
         let rows = (0..plan.k).map(|_| None).collect();
-        Decoder { plan, rows, rank: 0, seen: Default::default() }
+        Decoder {
+            plan,
+            rows,
+            rank: 0,
+            seen: Default::default(),
+        }
     }
 
     pub fn rank(&self) -> usize {
@@ -242,7 +257,11 @@ impl Decoder {
                 }
             }
         }
-        let Some(pivot) = mask.iter().enumerate().find(|(_, &m)| m != 0).map(|(w, m)| w * 64 + m.trailing_zeros() as usize)
+        let Some(pivot) = mask
+            .iter()
+            .enumerate()
+            .find(|(_, &m)| m != 0)
+            .map(|(w, m)| w * 64 + m.trailing_zeros() as usize)
         else {
             return false;
         };
@@ -263,7 +282,9 @@ impl Decoder {
     }
 
     fn solved(&self, i: usize) -> bool {
-        self.rows[i].as_ref().is_some_and(|r| r.mask.iter().map(|m| m.count_ones()).sum::<u32>() == 1)
+        self.rows[i]
+            .as_ref()
+            .is_some_and(|r| r.mask.iter().map(|m| m.count_ones()).sum::<u32>() == 1)
     }
 
     /// Number of source packets recovered so far (anywhere in the stream).
@@ -384,7 +405,13 @@ mod tests {
         // minimum, so allow a fraction of late runs.
         eprintln!("late counts {late:?} of {trials}");
         for i in 0..6 {
-            assert!(late[i] * 4 <= trials as usize, "window {} late in {}/{} runs", i + 1, late[i], trials);
+            assert!(
+                late[i] * 4 <= trials as usize,
+                "window {} late in {}/{} runs",
+                i + 1,
+                late[i],
+                trials
+            );
         }
     }
 

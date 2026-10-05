@@ -19,7 +19,9 @@ fn bad(msg: &str) -> io::Error {
 
 pub fn parse(bytes: &[u8]) -> io::Result<Wav> {
     if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err(bad("not a RIFF/WAVE file (convert it first, e.g. `afconvert -f WAVE -d LEI16 in.m4a out.wav`)"));
+        return Err(bad(
+            "not a RIFF/WAVE file (convert it first, e.g. `afconvert -f WAVE -d LEI16 in.m4a out.wav`)",
+        ));
     }
     let u16le = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
     let u32le = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
@@ -44,7 +46,11 @@ pub fn parse(bytes: &[u8]) -> io::Result<Wav> {
                 return Err(bad("zero channels or sample rate"));
             }
             // Some recorders write size 0 or 0xFFFFFFFF when streaming.
-            let end = if size == 0 || body + size > bytes.len() { bytes.len() } else { body + size };
+            let end = if size == 0 || body + size > bytes.len() {
+                bytes.len()
+            } else {
+                body + size
+            };
             let data = &bytes[body..end];
             let bps = (bits as usize).div_ceil(8);
             let frame = bps * channels as usize;

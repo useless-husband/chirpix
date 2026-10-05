@@ -13,7 +13,11 @@ pub struct Image {
 
 impl Image {
     pub fn new(w: usize, h: usize) -> Self {
-        Image { w, h, data: vec![0; w * h * 3] }
+        Image {
+            w,
+            h,
+            data: vec![0; w * h * 3],
+        }
     }
 
     pub fn filled(w: usize, h: usize, rgb: [u8; 3]) -> Self {
@@ -73,7 +77,10 @@ impl Image {
 
     /// BT.601 luma in [0, 255].
     pub fn luma(&self) -> Vec<f32> {
-        self.data.chunks_exact(3).map(|p| 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32).collect()
+        self.data
+            .chunks_exact(3)
+            .map(|p| 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
+            .collect()
     }
 }
 
@@ -203,7 +210,13 @@ pub fn synthetic(name: &str, w: usize, h: usize) -> Image {
                 .map(|i| {
                     let f = 1.0 + (i / 3) as f64 * 1.7;
                     let ang = rng.f64() * std::f64::consts::TAU;
-                    [f * ang.cos(), f * ang.sin(), rng.f64() * std::f64::consts::TAU, 1.0 / f, (i % 3) as f64]
+                    [
+                        f * ang.cos(),
+                        f * ang.sin(),
+                        rng.f64() * std::f64::consts::TAU,
+                        1.0 / f,
+                        (i % 3) as f64,
+                    ]
                 })
                 .collect();
             for y in 0..h {

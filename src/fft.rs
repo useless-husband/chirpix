@@ -13,7 +13,10 @@ impl Cpx {
     }
     /// e^{j theta}
     pub fn expj(theta: f64) -> Self {
-        Cpx { re: theta.cos(), im: theta.sin() }
+        Cpx {
+            re: theta.cos(),
+            im: theta.sin(),
+        }
     }
     pub fn conj(self) -> Self {
         Cpx { re: self.re, im: -self.im }
@@ -28,26 +31,38 @@ impl Cpx {
         self.im.atan2(self.re)
     }
     pub fn scale(self, s: f64) -> Self {
-        Cpx { re: self.re * s, im: self.im * s }
+        Cpx {
+            re: self.re * s,
+            im: self.im * s,
+        }
     }
 }
 
 impl std::ops::Add for Cpx {
     type Output = Cpx;
     fn add(self, o: Cpx) -> Cpx {
-        Cpx { re: self.re + o.re, im: self.im + o.im }
+        Cpx {
+            re: self.re + o.re,
+            im: self.im + o.im,
+        }
     }
 }
 impl std::ops::Sub for Cpx {
     type Output = Cpx;
     fn sub(self, o: Cpx) -> Cpx {
-        Cpx { re: self.re - o.re, im: self.im - o.im }
+        Cpx {
+            re: self.re - o.re,
+            im: self.im - o.im,
+        }
     }
 }
 impl std::ops::Mul for Cpx {
     type Output = Cpx;
     fn mul(self, o: Cpx) -> Cpx {
-        Cpx { re: self.re * o.re - self.im * o.im, im: self.re * o.im + self.im * o.re }
+        Cpx {
+            re: self.re * o.re - self.im * o.im,
+            im: self.re * o.im + self.im * o.re,
+        }
     }
 }
 impl std::ops::AddAssign for Cpx {
@@ -69,7 +84,9 @@ impl Fft {
         assert!(n.is_power_of_two() && n >= 2, "FFT size must be a power of two");
         let bits = n.trailing_zeros();
         let rev = (0..n as u32).map(|i| i.reverse_bits() >> (32 - bits)).collect();
-        let tw = (0..n / 2).map(|k| Cpx::expj(-2.0 * std::f64::consts::PI * k as f64 / n as f64)).collect();
+        let tw = (0..n / 2)
+            .map(|k| Cpx::expj(-2.0 * std::f64::consts::PI * k as f64 / n as f64))
+            .collect();
         Fft { n, rev, tw }
     }
 
@@ -213,7 +230,9 @@ mod tests {
     fn single_tone_lands_in_one_bin() {
         let n = 1024;
         let k = 37;
-        let mut x: Vec<Cpx> = (0..n).map(|i| Cpx::expj(2.0 * std::f64::consts::PI * (k * i) as f64 / n as f64)).collect();
+        let mut x: Vec<Cpx> = (0..n)
+            .map(|i| Cpx::expj(2.0 * std::f64::consts::PI * (k * i) as f64 / n as f64))
+            .collect();
         Fft::new(n).forward(&mut x);
         for (i, v) in x.iter().enumerate() {
             let want = if i == k { n as f64 } else { 0.0 };

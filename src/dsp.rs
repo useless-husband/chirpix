@@ -56,7 +56,9 @@ fn kernel_table() -> &'static Vec<f32> {
 /// Windowed-sinc low-pass FIR with cutoff `fc` (cycles per sample).
 pub fn lowpass(fc: f64, taps: usize) -> Vec<f32> {
     let m = (taps - 1) as f64 / 2.0;
-    (0..taps).map(|i| (2.0 * fc * sinc(2.0 * fc * (i as f64 - m)) * kaiser(i as f64 - m, m + 1.0, 8.0)) as f32).collect()
+    (0..taps)
+        .map(|i| (2.0 * fc * sinc(2.0 * fc * (i as f64 - m)) * kaiser(i as f64 - m, m + 1.0, 8.0)) as f32)
+        .collect()
 }
 
 /// Band-pass FIR between `f_lo` and `f_hi` (cycles per sample).
@@ -142,10 +144,20 @@ mod tests {
 
     #[test]
     fn resample_round_trip_is_transparent() {
-        let x: Vec<f32> = tone(1500.0, 30_000, 48000.0).iter().zip(tone(6900.0, 30_000, 48000.0)).map(|(a, b)| a + b).collect();
+        let x: Vec<f32> = tone(1500.0, 30_000, 48000.0)
+            .iter()
+            .zip(tone(6900.0, 30_000, 48000.0))
+            .map(|(a, b)| a + b)
+            .collect();
         let step = 1.0 + 150e-6;
         let back = resample(&resample(&x, step), 1.0 / step);
-        let err = x.iter().zip(&back).skip(300).take(29_000).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let err = x
+            .iter()
+            .zip(&back)
+            .skip(300)
+            .take(29_000)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         assert!(err < 3e-3, "round trip error {err}");
     }
 

@@ -59,6 +59,8 @@ figure.chart.small{width:360px}
 figcaption{font-weight:600;font-size:14px;margin-bottom:4px;color:var(--ink)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;color:var(--ink2);margin:2px 0 4px}
 .legend span{display:inline-flex;align-items:center;gap:6px}
+.legend svg{width:26px;height:14px;flex:none}
+.tw{overflow-x:auto;max-width:100%}
 svg{display:block;width:100%;height:auto}
 svg .grid{stroke:var(--grid);stroke-width:1}svg .axis{stroke:var(--axis);stroke-width:1}
 svg .tick{fill:var(--muted);font-size:11px}svg .label{fill:var(--ink2);font-size:12px}
@@ -80,7 +82,11 @@ details{margin:8px 0}summary{cursor:pointer;color:var(--ink2)}
 fn img_tag(img: &Image, alt: &str) -> String {
     let f = img.w.div_ceil(400).max(1);
     let small = img.downscale(f);
-    format!("<img alt=\"{}\" src=\"data:image/png;base64,{}\">", esc(alt), base64(&crate::png::encode(&small)))
+    format!(
+        "<img alt=\"{}\" src=\"data:image/png;base64,{}\">",
+        esc(alt),
+        base64(&crate::png::encode(&small))
+    )
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -111,7 +117,12 @@ fn spectrogram(x: &[f32]) -> Image {
         }
     }
     // One hue, light to dark, over a 60 dB range.
-    let ramp = [[252.0, 252.0, 251.0], [205.0, 226.0, 251.0], [42.0, 120.0, 214.0], [13.0, 54.0, 107.0]];
+    let ramp = [
+        [252.0, 252.0, 251.0],
+        [205.0, 226.0, 251.0],
+        [42.0, 120.0, 214.0],
+        [13.0, 54.0, 107.0],
+    ];
     let mut img = Image::new(cols, rows);
     for c in 0..cols {
         for r in 0..rows {
@@ -168,7 +179,10 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     let ber_frames = if q { 25 } else { 170 };
     let ber: Vec<(Constellation, Vec<ex::BerPoint>)> = [
         (Constellation::Qpsk, vec![1.0, 2.0, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 8.0, 10.0]),
-        (Constellation::Qam16, vec![6.0, 7.0, 8.0, 9.0, 9.5, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0]),
+        (
+            Constellation::Qam16,
+            vec![6.0, 7.0, 8.0, 9.0, 9.5, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0],
+        ),
     ]
     .into_iter()
     .map(|(c, es)| (c, ex::ber_curve(c, &es, ber_frames, th)))
@@ -228,7 +242,10 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                         E2eJob {
                             image_name: name.clone(),
                             image: img.clone(),
-                            channel: Channel { seed: ch.seed + 31 * si as u64 + 7 * ii as u64, ..ch.clone() },
+                            channel: Channel {
+                                seed: ch.seed + 31 * si as u64 + 7 * ii as u64,
+                                ..ch.clone()
+                            },
                             variant: *variant,
                             cons,
                             design_seconds: 75.0,
@@ -244,13 +261,21 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     }
     let results: Vec<((usize, usize, usize, usize), E2eRun)> = parallel_map(jobs, th, |(key, job)| (key, ex::run_e2e(&job)));
     let pick = |ci: usize, li: usize, ii: Option<usize>| -> Vec<&E2eRun> {
-        results.iter().filter(|(k, _)| k.1 == ci && k.2 == li && ii.is_none_or(|i| k.0 == i)).map(|(_, r)| r).collect()
+        results
+            .iter()
+            .filter(|(k, _)| k.1 == ci && k.2 == li && ii.is_none_or(|i| k.0 == i))
+            .map(|(_, r)| r)
+            .collect()
     };
 
     log("start-offset sweep");
     let off_step = if q { 15.0 } else { 5.0 };
     let off_starts: Vec<f64> = (0..=(85.0 / off_step) as usize).map(|i| i as f64 * off_step + 0.4).collect();
-    let off_lines = [(Variant::Windowed, "chirpix", 1usize), (Variant::CarouselProgressive, "progressive, in order, no fountain", 2), (Variant::CarouselAtomic, "plain file, one pass in 75 s", 3)];
+    let off_lines = [
+        (Variant::Windowed, "chirpix", 1usize),
+        (Variant::CarouselProgressive, "progressive, in order, no fountain", 2),
+        (Variant::CarouselAtomic, "plain file, one pass in 75 s", 3),
+    ];
     let mut off_jobs = Vec::new();
     for (li, (variant, _, _)) in off_lines.iter().enumerate() {
         for &start in &off_starts {
@@ -259,7 +284,10 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                 E2eJob {
                     image_name: images[0].0.clone(),
                     image: images[0].1.clone(),
-                    channel: Channel { seed: 900 + start as u64, ..channels[gallery_ch].clone() },
+                    channel: Channel {
+                        seed: 900 + start as u64,
+                        ..channels[gallery_ch].clone()
+                    },
                     variant: *variant,
                     cons: probes[gallery_ch].1,
                     design_seconds: 75.0,
@@ -274,9 +302,19 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     let off_results: Vec<((usize, f64), E2eRun)> = parallel_map(off_jobs, th, |(key, job)| (key, ex::run_e2e(&job)));
 
     log("signal pictures");
-    let demo_tx = Transmission::new(&images[0].1, &TxConfig::new(probes[gallery_ch].1, crate::fountain::Scheme::Windowed));
+    let demo_tx = Transmission::new(
+        &images[0].1,
+        &TxConfig::new(probes[gallery_ch].1, crate::fountain::Scheme::Windowed),
+    );
     let demo_audio = channels[gallery_ch].apply(&demo_tx.audio(7, 5));
-    let (demo_rx, _) = m.receive(&demo_audio, FS, &RxOptions { keep_debug: true, ..Default::default() });
+    let (demo_rx, _) = m.receive(
+        &demo_audio,
+        FS,
+        &RxOptions {
+            keep_debug: true,
+            ..Default::default()
+        },
+    );
     let spec_img = spectrogram(&demo_audio[..demo_audio.len().min(6 * FS as usize)]);
 
     // ---------------------------------------------------------- write
@@ -294,12 +332,48 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     h += "<h2>Signal</h2><table><tr><th>Parameter</th><th>Value</th></tr>";
     let rows = [
         ("Sample rate", format!("{} Hz", FS)),
-        ("Band", format!("{:.0}-{:.0} Hz, {} carriers {:.2} Hz apart", p.first_bin() as f64 * p.carrier_spacing_hz(), (p.first_bin() + p.ncar()) as f64 * p.carrier_spacing_hz(), p.ncar(), p.carrier_spacing_hz())),
-        ("OFDM symbol", format!("{:.1} ms + {:.1} ms cyclic prefix", p.nfft as f64 * 1e3 / FS as f64, p.cp as f64 * 1e3 / FS as f64)),
-        ("Frame", format!("{:.3} s: chirp, training symbol, header symbol, {} data symbols", p.frame_seconds(), p.data_syms())),
-        ("Pilots", format!("every {}th carrier of every data symbol", crate::modem::PILOT_STEP)),
-        ("Error correction", "convolutional K=7 (133,171) rate 1/2, soft Viterbi; CRC-32 per packet".to_string()),
-        ("Payload rate", format!("QPSK {:.0} B/s, 16-QAM {:.0} B/s", p.byte_rate(Constellation::Qpsk), p.byte_rate(Constellation::Qam16))),
+        (
+            "Band",
+            format!(
+                "{:.0}-{:.0} Hz, {} carriers {:.2} Hz apart",
+                p.first_bin() as f64 * p.carrier_spacing_hz(),
+                (p.first_bin() + p.ncar()) as f64 * p.carrier_spacing_hz(),
+                p.ncar(),
+                p.carrier_spacing_hz()
+            ),
+        ),
+        (
+            "OFDM symbol",
+            format!(
+                "{:.1} ms + {:.1} ms cyclic prefix",
+                p.nfft as f64 * 1e3 / FS as f64,
+                p.cp as f64 * 1e3 / FS as f64
+            ),
+        ),
+        (
+            "Frame",
+            format!(
+                "{:.3} s: chirp, training symbol, header symbol, {} data symbols",
+                p.frame_seconds(),
+                p.data_syms()
+            ),
+        ),
+        (
+            "Pilots",
+            format!("every {}th carrier of every data symbol", crate::modem::PILOT_STEP),
+        ),
+        (
+            "Error correction",
+            "convolutional K=7 (133,171) rate 1/2, soft Viterbi; CRC-32 per packet".to_string(),
+        ),
+        (
+            "Payload rate",
+            format!(
+                "QPSK {:.0} B/s, 16-QAM {:.0} B/s",
+                p.byte_rate(Constellation::Qpsk),
+                p.byte_rate(Constellation::Qam16)
+            ),
+        ),
     ];
     for (k, v) in rows {
         h += &format!("<tr><td>{k}</td><td style=\"text-align:left\">{}</td></tr>", esc(&v));
@@ -353,7 +427,10 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         mean(&greys.iter().map(|g| g.1).collect::<Vec<_>>()),
         mean(&greys.iter().map(|g| g.2).collect::<Vec<_>>())
     );
-    let tidx: Vec<usize> = shot_times.iter().map(|t| times.iter().position(|x| (x - t).abs() < 1e-6).unwrap()).collect();
+    let tidx: Vec<usize> = shot_times
+        .iter()
+        .map(|t| times.iter().position(|x| (x - t).abs() < 1e-6).unwrap())
+        .collect();
     let mut charts_psnr = String::new();
     for (ci, ch) in channels.iter().enumerate() {
         h += &format!(
@@ -365,7 +442,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             probes[ci].1.name()
         );
         summary += &format!("Channel {}: {} -> {}\n", ch.name, ch.describe(), probes[ci].1.name());
-        h += "<table><tr><th>Scheme</th><th>Mode</th><th>File</th><th>Packets delivered</th>";
+        h += "<div class=\"tw\"><table><tr><th>Scheme</th><th>Mode</th><th>File</th><th>Packets delivered</th>";
         for t in shot_times {
             h += &format!("<th>{t:.0} s</th>");
         }
@@ -398,7 +475,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                 series.push(Series::new(label, slot, a.by_time.iter().map(|b| (b.0, b.1)).collect()));
             }
         }
-        h += "</table>";
+        h += "</table></div>";
         let mut chart = Chart::new(&format!("Mean PSNR, channel “{}”", ch.name), "seconds listened", "PSNR (dB)");
         chart.series = series;
         chart.decimals = 1;
@@ -461,12 +538,33 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     }
     table += "</table>";
     for (li, (_, label, slot)) in off_lines.iter().enumerate() {
-        let pts = off_starts.iter().map(|&s| (s, off_results.iter().find(|(k, _)| k.0 == li && k.1 == s).unwrap().1.points[0].psnr.unwrap_or(g0))).collect();
+        let pts = off_starts
+            .iter()
+            .map(|&s| {
+                (
+                    s,
+                    off_results.iter().find(|(k, _)| k.0 == li && k.1 == s).unwrap().1.points[0]
+                        .psnr
+                        .unwrap_or(g0),
+                )
+            })
+            .collect();
         chart.series.push(Series::new(label, *slot, pts));
     }
-    let ours: Vec<f64> = off_starts.iter().map(|&s| off_results.iter().find(|(k, _)| k.0 == 0 && k.1 == s).unwrap().1.points[0].psnr.unwrap_or(g0)).collect();
+    let ours: Vec<f64> = off_starts
+        .iter()
+        .map(|&s| {
+            off_results.iter().find(|(k, _)| k.0 == 0 && k.1 == s).unwrap().1.points[0]
+                .psnr
+                .unwrap_or(g0)
+        })
+        .collect();
     let (omin, omax) = ours.iter().fold((f64::MAX, f64::MIN), |a, v| (a.0.min(*v), a.1.max(*v)));
-    summary += &format!("Start-offset sweep (30 s of listening, channel {}): chirpix PSNR between {omin:.1} and {omax:.1} dB over {} start times\n", channels[gallery_ch].name, off_starts.len());
+    summary += &format!(
+        "Start-offset sweep (30 s of listening, channel {}): chirpix PSNR between {omin:.1} and {omax:.1} dB over {} start times\n",
+        channels[gallery_ch].name,
+        off_starts.len()
+    );
     h += &render(&chart);
     h += &format!("<details><summary>Table</summary>{table}</details></div>");
     h += &format!("<p class=\"note\">A run with no picture is drawn at the flat-grey score ({g0:.1} dB).</p>");
@@ -477,18 +575,44 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         let mut chart = Chart::new(&format!("{}: bit error rate", cons.name()), "Es/N0 (dB)", "bit error rate");
         chart.log_y = true;
         chart.y_range = Some((1e-6, 1.0));
-        chart.series.push(Series::new("uncoded, theory", 1, pts.iter().map(|b| (b.esn0_db, b.uncoded_theory)).collect()).dashed());
-        chart.series.push(Series::new("uncoded, modem", 1, pts.iter().map(|b| (b.esn0_db, b.uncoded_modem)).collect()));
+        chart
+            .series
+            .push(Series::new("uncoded, theory", 1, pts.iter().map(|b| (b.esn0_db, b.uncoded_theory)).collect()).dashed());
+        chart.series.push(Series::new(
+            "uncoded, modem",
+            1,
+            pts.iter().map(|b| (b.esn0_db, b.uncoded_modem)).collect(),
+        ));
         if *cons == Constellation::Qpsk {
-            chart.series.push(Series::new("coded, union bound", 3, pts.iter().map(|b| (b.esn0_db, b.coded_bound)).collect()).dashed());
+            chart.series.push(
+                Series::new(
+                    "coded, union bound",
+                    3,
+                    pts.iter()
+                        .filter(|b| b.coded_bound >= 1e-6)
+                        .map(|b| (b.esn0_db, b.coded_bound))
+                        .collect(),
+                )
+                .dashed(),
+            );
         }
-        chart.series.push(Series::new("coded, ideal receiver", 2, pts.iter().map(|b| (b.esn0_db, b.coded_ideal)).collect()));
-        chart.series.push(Series::new("coded, modem", 4, pts.iter().map(|b| (b.esn0_db, b.coded_modem)).collect()));
+        chart.series.push(Series::new(
+            "coded, ideal receiver",
+            2,
+            pts.iter().map(|b| (b.esn0_db, b.coded_ideal)).collect(),
+        ));
+        chart.series.push(Series::new(
+            "coded, modem",
+            4,
+            pts.iter().map(|b| (b.esn0_db, b.coded_modem)).collect(),
+        ));
         h += &render(&chart);
     }
-    h += "</div><table><tr><th>Constellation</th><th>Uncoded BER 1e-2: theory</th><th>modem</th><th>loss</th><th>Coded BER 1e-4: ideal receiver</th><th>modem</th><th>implementation loss</th><th>Packet loss &lt; 1% from</th></tr>";
+    h += "</div><div class=\"tw\"><table><tr><th>Constellation</th><th>Uncoded BER 1e-2: theory</th><th>modem</th><th>loss</th><th>Coded BER 1e-4: ideal receiver</th><th>modem</th><th>implementation loss</th><th>Packet loss &lt; 1% from</th></tr>";
     for (cons, pts) in &ber {
-        let c = |f: &dyn Fn(&ex::BerPoint) -> f64, target: f64| ex::crossing(&pts.iter().map(|b| (b.esn0_db, f(b))).collect::<Vec<_>>(), target);
+        let c = |f: &dyn Fn(&ex::BerPoint) -> f64, target: f64| {
+            ex::crossing(&pts.iter().map(|b| (b.esn0_db, f(b))).collect::<Vec<_>>(), target)
+        };
         let (ut, um) = (c(&|b| b.uncoded_theory, 1e-2), c(&|b| b.uncoded_modem, 1e-2));
         let (ci, cm) = (c(&|b| b.coded_ideal, 1e-4), c(&|b| b.coded_modem, 1e-4));
         let pl = pts.iter().find(|b| b.packet_loss < 0.01).map(|b| b.esn0_db);
@@ -497,7 +621,17 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             (Some(a), Some(b)) => format!("{:.1} dB", b - a),
             _ => "n/a".into(),
         };
-        h += &format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>", cons.name(), f(ut), f(um), d(ut, um), f(ci), f(cm), d(ci, cm), f(pl));
+        h += &format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            cons.name(),
+            f(ut),
+            f(um),
+            d(ut, um),
+            f(ci),
+            f(cm),
+            d(ci, cm),
+            f(pl)
+        );
         summary += &format!(
             "{}: uncoded BER 1e-2 at {} (theory {}), coded BER 1e-4 at {} (ideal receiver {}): implementation loss {}; packet loss < 1% from {}\n",
             cons.name(),
@@ -509,7 +643,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             f(pl)
         );
     }
-    h += &format!("</table><p class=\"note\">{} frames per point ({} information bits for QPSK). Eb/N0 = Es/N0 for QPSK at rate 1/2 and Es/N0 − 3 dB for 16-QAM at rate 1/2; these figures do not include the cyclic prefix, pilots and frame overhead, which cost a further {:.1} dB of transmitted energy.</p>",
+    h += &format!("</table></div><p class=\"note\">{} frames per point ({} information bits for QPSK). Eb/N0 = Es/N0 for QPSK at rate 1/2 and Es/N0 − 3 dB for 16-QAM at rate 1/2; these figures do not include the cyclic prefix, pilots and frame overhead, which cost a further {:.1} dB of transmitted energy.</p>",
         ber_frames,
         ber_frames * crate::modem::BLOCKS * 890,
         -10.0 * ((p.data_syms() * p.nfft) as f64 * (p.ndata() as f64 / p.ncar() as f64) / p.frame_len() as f64).log10());
@@ -524,32 +658,47 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         chart.y_range = Some((0.0, 1.0));
         chart.width = 360.0;
         chart.height = 240.0;
-        chart.series.push(Series::new("QPSK", 1, sw.points.iter().map(|pt| (pt.x, pt.qpsk)).collect()));
-        chart.series.push(Series::new("16-QAM", 2, sw.points.iter().map(|pt| (pt.x, pt.qam16)).collect()));
-        h += &render(&chart).replace("class=\"chart\"", "class=\"chart small\"").replace("</svg></figure>", &format!("</svg><div class=\"note\">{}</div></figure>", esc(&sw.note)));
+        chart
+            .series
+            .push(Series::new("QPSK", 1, sw.points.iter().map(|pt| (pt.x, pt.qpsk)).collect()));
+        chart
+            .series
+            .push(Series::new("16-QAM", 2, sw.points.iter().map(|pt| (pt.x, pt.qam16)).collect()));
+        h += &render(&chart).replace("class=\"chart\"", "class=\"chart small\"").replace(
+            "</svg></figure>",
+            &format!("</svg><div class=\"note\">{}</div></figure>", esc(&sw.note)),
+        );
     }
     h += "</div><details><summary>Tables</summary>";
     for sw in &sweeps {
-        h += &format!("<h3>{}</h3><table><tr><th>{}</th><th>QPSK</th><th>16-QAM</th><th>receiver SNR (QPSK run)</th></tr>", esc(&sw.title), esc(&sw.x_label));
+        h += &format!(
+            "<h3>{}</h3><table><tr><th>{}</th><th>QPSK</th><th>16-QAM</th><th>receiver SNR (QPSK run)</th></tr>",
+            esc(&sw.title),
+            esc(&sw.x_label)
+        );
         for pt in &sw.points {
-            h += &format!("<tr><td>{}</td><td>{:.0}%</td><td>{:.0}%</td><td>{}</td></tr>", esc(&pt.label), pt.qpsk * 100.0, pt.qam16 * 100.0, if pt.rx_snr_db.is_nan() { "no frame".into() } else { format!("{:.1} dB", pt.rx_snr_db) });
+            h += &format!(
+                "<tr><td>{}</td><td>{:.0}%</td><td>{:.0}%</td><td>{}</td></tr>",
+                esc(&pt.label),
+                pt.qpsk * 100.0,
+                pt.qam16 * 100.0,
+                if pt.rx_snr_db.is_nan() {
+                    "no frame".into()
+                } else {
+                    format!("{:.1} dB", pt.rx_snr_db)
+                }
+            );
         }
         h += "</table>";
     }
     h += "</details>";
 
     // ---- numerology
-    h += "<h2>Why the symbols are this long</h2><p>The same modem at four symbol lengths, with the cyclic prefix a quarter of the symbol. Echo that arrives after the cyclic prefix is interference no matter how loud the signal is, so short symbols hit a ceiling in a reverberant room; long symbols cost rate (more of each frame is preamble) and are more sensitive to clock offset and movement. Left: RT60 0.45 s, noise 25 dB down. Right: clock offset with the resampling pass switched off.</p><table><tr><th>Symbol + prefix</th><th>Carrier spacing</th><th>QPSK rate</th>";
-    for (d, ..) in &numerology[0].by_drr {
-        h += &format!("<th>DRR {d:+.0} dB</th>");
-    }
-    for (ppm, ..) in &numerology[0].by_ppm {
-        h += &format!("<th>{ppm:.0} ppm</th>");
-    }
-    h += "</tr>";
-    for r in &numerology {
+    h += "<h2>Why the symbols are this long</h2><p>The same modem at four symbol lengths, with the cyclic prefix a quarter of the symbol. Echo that arrives after the cyclic prefix is interference no matter how loud the signal is, so short symbols hit a ceiling in a reverberant room; long symbols cost rate (more of each frame is preamble) and are more sensitive to clock offset and movement. Cells: packets delivered QPSK / 16-QAM. The row in bold is the numerology used everywhere else on this page.</p>";
+    let head = |h: &mut String| *h += "<div class=\"tw\"><table><tr><th>Symbol + prefix</th><th>Carrier spacing</th><th>QPSK rate</th>";
+    let lead = |h: &mut String, r: &ex::NumerologyRow| {
         let pr: Params = r.params;
-        h += &format!(
+        *h += &format!(
             "<tr><td{}>{:.0} + {:.0} ms</td><td>{:.1} Hz</td><td>{:.0} B/s</td>",
             if pr == p { " class=\"ours\"" } else { "" },
             pr.nfft as f64 * 1e3 / FS as f64,
@@ -557,18 +706,45 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             pr.carrier_spacing_hz(),
             r.byte_rate
         );
+    };
+    h += "<h3>Against echo: RT60 0.45 s, noise 25 dB down, by direct-to-reverberant ratio</h3>";
+    head(&mut h);
+    for (d, ..) in &numerology[0].by_drr {
+        h += &format!("<th>DRR {d:+.0} dB</th>");
+    }
+    h += "</tr>";
+    for r in &numerology {
+        lead(&mut h, r);
         for (_, qp, qa, snr) in &r.by_drr {
-            h += &format!("<td>{:.0}% / {:.0}% <small>{}</small></td>", qp * 100.0, qa * 100.0, if snr.is_nan() { "—".into() } else { format!("{snr:.0} dB") });
+            h += &format!(
+                "<td>{:.0}% / {:.0}% <small>{}</small></td>",
+                qp * 100.0,
+                qa * 100.0,
+                if snr.is_nan() { "no frame".into() } else { format!("{snr:.0} dB") }
+            );
         }
+        h += "</tr>";
+    }
+    h += "</table></div><p class=\"note\">The small figure is the SNR the receiver measured.</p><h3>Against clock offset, with the resampling pass switched off: SNR 20 dB, light reverberation</h3>";
+    head(&mut h);
+    for (ppm, ..) in &numerology[0].by_ppm {
+        h += &format!("<th>{ppm:.0} ppm</th>");
+    }
+    h += "</tr>";
+    for r in &numerology {
+        lead(&mut h, r);
         for (_, qp, qa) in &r.by_ppm {
             h += &format!("<td>{:.0}% / {:.0}%</td>", qp * 100.0, qa * 100.0);
         }
         h += "</tr>";
     }
-    h += "</table><p class=\"note\">Cells: packets delivered QPSK / 16-QAM, and the SNR the receiver measured. The row in bold is the numerology used everywhere else on this page.</p>";
+    h += "</table></div>";
 
     // ---- signal pictures
-    h += &format!("<h2>The signal itself</h2><p>Five frames through channel “{}”.</p><div class=\"row\">", esc(&channels[gallery_ch].name));
+    h += &format!(
+        "<h2>The signal itself</h2><p>Five frames through channel “{}”.</p><div class=\"row\">",
+        esc(&channels[gallery_ch].name)
+    );
     h += &format!(
         "<figure class=\"chart\"><figcaption>Spectrogram of the received audio</figcaption><img style=\"width:100%;image-rendering:pixelated\" alt=\"spectrogram\" src=\"data:image/png;base64,{}\"><div class=\"note\">Time left to right ({:.1} s), 0 to 12 kHz bottom to top, 60 dB range. The sweeps are the chirp and the training symbol at the start of each frame.</div></figure>",
         base64(&crate::png::encode(&spec_img)),
@@ -582,15 +758,32 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                 svg += &format!("<circle class=\"dot\" cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"1.6\"/>");
             }
         }
-        svg += &format!("</svg><div class=\"note\">{} points, {}, receiver SNR {:.1} dB, clock offset {:+.0} ppm.</div></figure>", f.points.len(), f.spec.cons.name(), f.snr_db, f.ppm);
+        svg += &format!(
+            "</svg><div class=\"note\">{} points, {}, receiver SNR {:.1} dB, clock offset {:+.0} ppm.</div></figure>",
+            f.points.len(),
+            f.spec.cons.name(),
+            f.snr_db,
+            f.ppm
+        );
         h += &svg;
         let mut chart = Chart::new("Channel as the receiver sees it", "frequency (kHz)", "dB");
         chart.decimals = 1;
         let fk = |c: usize| (p.first_bin() + c) as f64 * p.carrier_spacing_hz() / 1000.0;
         let dec = (p.ncar() / 128).max(1);
-        let mut gain = Series::new("channel gain", 1, (0..p.ncar()).step_by(dec).map(|c| (fk(c), 20.0 * (f.channel_mag[c].max(1e-6) as f64).log10())).collect());
+        let mut gain = Series::new(
+            "channel gain",
+            1,
+            (0..p.ncar())
+                .step_by(dec)
+                .map(|c| (fk(c), 20.0 * (f.channel_mag[c].max(1e-6) as f64).log10()))
+                .collect(),
+        );
         gain.markers = false;
-        let mut snr = Series::new("SNR per carrier", 2, (0..p.ncar()).step_by(dec).map(|c| (fk(c), f.snr_per_carrier[c] as f64)).collect());
+        let mut snr = Series::new(
+            "SNR per carrier",
+            2,
+            (0..p.ncar()).step_by(dec).map(|c| (fk(c), f.snr_per_carrier[c] as f64)).collect(),
+        );
         snr.markers = false;
         chart.series = vec![gain, snr];
         h += &render(&chart);
@@ -598,7 +791,12 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     h += "</div>";
 
     h += "<h2>Reading these numbers</h2><ul><li>All channels here are simulated: band-limiting, a synthetic room impulse response (exponentially decaying noise with the stated RT60 and direct-to-reverberant ratio), a resampler for clock offset, white noise, clicks, deleted audio and clipping. A real loudspeaker, room and microphone also add non-linear distortion, automatic gain control and movement, none of which is modelled.</li><li>SNR means signal power over the noise power inside the modem's 6 kHz band.</li><li>The plain-file and flat-fountain baselines carry the same codec's output; they differ only in how packets are scheduled and in showing nothing until the file is complete.</li><li>No analogue SSTV baseline was run.</li></ul>";
-    h += &format!("<p class=\"note\">Generated in {:.0} s on {} thread{}.</p>", t0.elapsed().as_secs_f64(), th, if th == 1 { "" } else { "s" });
+    h += &format!(
+        "<p class=\"note\">Generated in {:.0} s on {} thread{}.</p>",
+        t0.elapsed().as_secs_f64(),
+        th,
+        if th == 1 { "" } else { "s" }
+    );
     h += "</main></body></html>";
     ReportOutput { html: h, summary }
 }
@@ -609,12 +807,16 @@ mod tests {
 
     #[test]
     fn spectrogram_shows_a_tone_at_the_right_height() {
-        let x: Vec<f32> = (0..48_000).map(|i| (std::f64::consts::TAU * 3000.0 * i as f64 / 48_000.0).sin() as f32).collect();
+        let x: Vec<f32> = (0..48_000)
+            .map(|i| (std::f64::consts::TAU * 3000.0 * i as f64 / 48_000.0).sin() as f32)
+            .collect();
         let img = spectrogram(&x);
         assert_eq!(img.h, 256);
         // 3 kHz is bin 64 of 1024 at 48 kHz: row 255 - 64 from the top is the darkest.
         let col = img.w / 2;
-        let darkest = (0..256).min_by_key(|&r| img.px(col, r).iter().map(|&v| v as u32).sum::<u32>()).unwrap();
+        let darkest = (0..256)
+            .min_by_key(|&r| img.px(col, r).iter().map(|&v| v as u32).sum::<u32>())
+            .unwrap();
         assert!((darkest as i32 - 191).abs() <= 1, "row {darkest}");
     }
 

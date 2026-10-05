@@ -5,6 +5,10 @@
 //! expanding-window fountain code ([`fountain`]), the progressive wavelet
 //! image codec ([`codec`]), and the WAV / PNG / DEFLATE file formats.
 
+// Signal-processing loops here index several arrays by the same carrier or
+// sample number; iterator chains would hide that.
+#![allow(clippy::needless_range_loop)]
+
 pub mod channel;
 pub mod chart;
 pub mod codec;

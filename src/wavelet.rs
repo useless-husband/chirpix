@@ -156,13 +156,41 @@ pub struct Subband {
 pub fn subbands(w: usize, h: usize, levels: usize) -> Vec<Subband> {
     let sizes = level_sizes(w, h, levels);
     let (lw, lh) = sizes[levels];
-    let mut out = vec![Subband { level: levels, orient: Orient::LL, x0: 0, y0: 0, w: lw, h: lh }];
+    let mut out = vec![Subband {
+        level: levels,
+        orient: Orient::LL,
+        x0: 0,
+        y0: 0,
+        w: lw,
+        h: lh,
+    }];
     for level in (1..=levels).rev() {
         let (pw, ph) = sizes[level - 1];
         let (lw, lh) = sizes[level];
-        out.push(Subband { level, orient: Orient::HL, x0: lw, y0: 0, w: pw - lw, h: lh });
-        out.push(Subband { level, orient: Orient::LH, x0: 0, y0: lh, w: lw, h: ph - lh });
-        out.push(Subband { level, orient: Orient::HH, x0: lw, y0: lh, w: pw - lw, h: ph - lh });
+        out.push(Subband {
+            level,
+            orient: Orient::HL,
+            x0: lw,
+            y0: 0,
+            w: pw - lw,
+            h: lh,
+        });
+        out.push(Subband {
+            level,
+            orient: Orient::LH,
+            x0: 0,
+            y0: lh,
+            w: lw,
+            h: ph - lh,
+        });
+        out.push(Subband {
+            level,
+            orient: Orient::HH,
+            x0: lw,
+            y0: lh,
+            w: pw - lw,
+            h: ph - lh,
+        });
     }
     out
 }

@@ -45,14 +45,22 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { nfft: 8192, cp: 2048, hdr_syms: 1 }
+        Params {
+            nfft: 8192,
+            cp: 2048,
+            hdr_syms: 1,
+        }
     }
 }
 
 impl Params {
     pub fn new(nfft: usize, cp: usize) -> Params {
         assert!(matches!(nfft, 1024 | 2048 | 4096 | 8192) && cp >= 64 && cp <= nfft);
-        Params { nfft, cp, hdr_syms: if nfft == 1024 { 2 } else { 1 } }
+        Params {
+            nfft,
+            cp,
+            hdr_syms: if nfft == 1024 { 2 } else { 1 },
+        }
     }
     fn scale(&self) -> usize {
         self.nfft / 1024
@@ -299,7 +307,11 @@ impl Modem {
             let phase = std::f64::consts::TAU * (f0 * t + 0.5 * (f1 - f0) * t * t / dur);
             let edge = 64.0;
             let m = (n as f64 + 0.5).min(CHIRP_LEN as f64 - n as f64 - 0.5);
-            let win = if m < edge { 0.5 - 0.5 * (std::f64::consts::PI * m / edge).cos() } else { 1.0 };
+            let win = if m < edge {
+                0.5 - 0.5 * (std::f64::consts::PI * m / edge).cos()
+            } else {
+                1.0
+            };
             chirp.push((TX_RMS * std::f64::consts::SQRT_2 * win * phase.sin()) as f32);
             // Analytic template: the correlation magnitude is then the envelope.
             *s = Cpx::new(win * phase.sin(), -win * phase.cos());
@@ -309,10 +321,14 @@ impl Modem {
         let chirp_spec_conj = spec.iter().map(|v| v.conj()).collect();
         let ncar = p.ncar();
         // Newman phases: a flat-spectrum training symbol with low peak factor.
-        let train_car = (0..ncar).map(|c| Cpx::expj(std::f64::consts::PI * ((c * c) % (2 * ncar)) as f64 / ncar as f64)).collect();
+        let train_car = (0..ncar)
+            .map(|c| Cpx::expj(std::f64::consts::PI * ((c * c) % (2 * ncar)) as f64 / ncar as f64))
+            .collect();
         let mut rng = Rng::new(0x9117);
         let sign = |rng: &mut Rng| if rng.bit() == 1 { -1.0 } else { 1.0 };
-        let pilot = (0..p.data_syms()).map(|_| (0..p.npilot()).map(|_| sign(&mut rng)).collect()).collect();
+        let pilot = (0..p.data_syms())
+            .map(|_| (0..p.npilot()).map(|_| sign(&mut rng)).collect())
+            .collect();
         let hdr_sign = (0..p.hdr_syms * ncar).map(|_| sign(&mut rng)).collect();
         let scramble = (0..BLOCKS * 2 * PKT_BYTES).map(|_| rng.next_u64() as u8).collect();
         Modem {
@@ -378,7 +394,9 @@ impl Modem {
     /// Carrier values of all header symbols (the header repeated to fill them).
     fn header_carriers(&self, spec: &FrameSpec) -> Vec<Cpx> {
         let pts = self.header_points(spec);
-        (0..self.p.hdr_syms * self.p.ncar()).map(|j| pts[self.hdr_slot(j)].scale(self.hdr_sign[j])).collect()
+        (0..self.p.hdr_syms * self.p.ncar())
+            .map(|j| pts[self.hdr_slot(j)].scale(self.hdr_sign[j]))
+            .collect()
     }
 
     /// Information bits of code block `b`: its packets, scrambled, each
@@ -414,7 +432,10 @@ impl Modem {
 
     /// Data-carrier values for a block: BLOCK_CARRIERS points.
     fn block_points(&self, cons: Constellation, info: &[u8]) -> Vec<Cpx> {
-        self.block_coded_bits(cons, info).chunks_exact(cons.bits()).map(|b| cons.map(b)).collect()
+        self.block_coded_bits(cons, info)
+            .chunks_exact(cons.bits())
+            .map(|b| cons.map(b))
+            .collect()
     }
 
     /// The transmitted information and coded bits of every block of a
@@ -504,7 +525,11 @@ impl Modem {
             big.inverse(&mut buf);
             for i in 0..hop.min(total - base) {
                 let e = cum[base + i + CHIRP_LEN] - cum[base + i];
-                rho[base + i] = if e > 1e-9 { (buf[i].abs() / (e * self.chirp_energy).sqrt()) as f32 } else { 0.0 };
+                rho[base + i] = if e > 1e-9 {
+                    (buf[i].abs() / (e * self.chirp_energy).sqrt()) as f32
+                } else {
+                    0.0
+                };
             }
             base += hop;
         }
@@ -535,7 +560,11 @@ impl Modem {
     /// `r[k]` across carriers: maximise Re sum r_k e^{+j 2 pi bin_k d / N}.
     fn estimate_delay(&self, r: &[(usize, Cpx)], centre: f64, span: f64) -> f64 {
         let n = self.p.nfft as f64;
-        let metric = |d: f64| -> f64 { r.iter().map(|&(bin, v)| (v * Cpx::expj(std::f64::consts::TAU * bin as f64 * d / n)).re).sum() };
+        let metric = |d: f64| -> f64 {
+            r.iter()
+                .map(|&(bin, v)| (v * Cpx::expj(std::f64::consts::TAU * bin as f64 * d / n)).re)
+                .sum()
+        };
         let search = |centre: f64, span: f64, step: f64| -> (f64, f64) {
             let k = (span / step).ceil() as i32;
             let (mut best, mut bd) = (f64::MIN, centre);
@@ -563,6 +592,9 @@ impl Modem {
         bd
     }
 }
+
+/// Decoded information bits of a code block, and each packet's payload if its CRC passed.
+type BlockResult = (Vec<u8>, Vec<Option<[u8; T]>>);
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RxOptions {
@@ -617,7 +649,7 @@ pub struct RxReport {
 }
 
 impl Modem {
-    fn decode_block(&self, spec: &FrameSpec, b: usize, llr_tx: &[f32]) -> (Vec<u8>, Vec<Option<[u8; T]>>) {
+    fn decode_block(&self, spec: &FrameSpec, b: usize, llr_tx: &[f32]) -> BlockResult {
         let cons = spec.cons;
         let perm = self.perm(cons);
         let mut llr = vec![0f32; llr_tx.len()];
@@ -654,7 +686,11 @@ impl Modem {
         let pv: Vec<f64> = (0..np)
             .map(|p| {
                 let c = p * PILOT_STEP + PILOT_STEP / 2;
-                ys.iter().enumerate().map(|(s, y)| (y[c] - h[c].scale(self.pilot[s][p])).norm2()).sum::<f64>() / ys.len() as f64
+                ys.iter()
+                    .enumerate()
+                    .map(|(s, y)| (y[c] - h[c].scale(self.pilot[s][p])).norm2())
+                    .sum::<f64>()
+                    / ys.len() as f64
             })
             .collect();
         // Few symbols per frame make each pilot's estimate rough; average neighbours.
@@ -689,7 +725,9 @@ impl Modem {
         let base = nominal - p.backoff();
         let off = |sym: usize| sym * p.sym();
         let first_data = 1 + p.hdr_syms;
-        let avail = (0..p.data_syms()).take_while(|&s| base + off(first_data + s) + n <= x.len()).count();
+        let avail = (0..p.data_syms())
+            .take_while(|&s| base + off(first_data + s) + n <= x.len())
+            .count();
         let nblocks = avail / bsyms;
         if nblocks == 0 {
             return None;
@@ -782,13 +820,16 @@ impl Modem {
             }
             (llr_tx, pts)
         };
-        let mut results: Vec<(Vec<u8>, Vec<Option<[u8; T]>>)> = Vec::with_capacity(nblocks);
+        let mut results: Vec<BlockResult> = Vec::with_capacity(nblocks);
         let mut debug: Vec<BlockDebug> = Vec::new();
         let mut points = Vec::new();
         for b in 0..nblocks {
             let (llr_tx, pts) = demod_block(b, &h, &noise);
             if opts.keep_debug {
-                debug.push(BlockDebug { coded_hard: llr_tx.iter().map(|&l| (l < 0.0) as u8).collect(), info: Vec::new() });
+                debug.push(BlockDebug {
+                    coded_hard: llr_tx.iter().map(|&l| (l < 0.0) as u8).collect(),
+                    info: Vec::new(),
+                });
                 if b == 0 {
                     points = pts.iter().map(|z| (z.re as f32, z.im as f32)).collect();
                 }
@@ -803,7 +844,11 @@ impl Modem {
             let mut den = vec![train_weight; ncar];
             let mut known: Vec<(usize, Vec<Cpx>)> = Vec::new();
             for b in 0..nblocks {
-                let pts = if good[b] { Some(self.block_points(cons, &results[b].0)) } else { None };
+                let pts = if good[b] {
+                    Some(self.block_points(cons, &results[b].0))
+                } else {
+                    None
+                };
                 for s in 0..bsyms {
                     let sym = b * bsyms + s;
                     let mut car = vec![Cpx::ZERO; ncar];
@@ -846,7 +891,7 @@ impl Modem {
             for b in (0..nblocks).filter(|&b| !good[b]) {
                 let (llr_tx, _) = demod_block(b, &h, &noise);
                 let retry = self.decode_block(&spec, b, &llr_tx);
-                let count = |r: &(Vec<u8>, Vec<Option<[u8; T]>>)| r.1.iter().filter(|pk| pk.is_some()).count();
+                let count = |r: &BlockResult| r.1.iter().filter(|pk| pk.is_some()).count();
                 if count(&retry) >= count(&results[b]) {
                     results[b] = retry;
                 }
@@ -862,7 +907,11 @@ impl Modem {
                 if let Some(payload) = pl {
                     packet_ok[b * ppb + j] = true;
                     let end_sample = (base + off(first_data + (b + 1) * bsyms - 1) + n).min(x.len());
-                    packets.push(RxPacket { id: spec.packet_id(b * ppb + j), payload, end_sample });
+                    packets.push(RxPacket {
+                        id: spec.packet_id(b * ppb + j),
+                        payload,
+                        end_sample,
+                    });
                 }
             }
         }
@@ -975,7 +1024,13 @@ mod tests {
     }
 
     fn spec(cons: Constellation, counter: u32) -> FrameSpec {
-        FrameSpec { cons, scheme: 0, session: 0xA7, counter, k: 124 }
+        FrameSpec {
+            cons,
+            scheme: 0,
+            session: 0xA7,
+            counter,
+            k: 124,
+        }
     }
 
     #[test]
@@ -985,7 +1040,12 @@ mod tests {
         assert_eq!(p.frame_len(), 82_944);
         assert_eq!(Constellation::Qpsk.info_bits_per_block(), 890);
         assert_eq!(Constellation::Qam16.info_bits_per_block(), 1786);
-        for p in [Params::new(1024, 256), Params::new(2048, 512), Params::new(4096, 1024), Params::new(8192, 2048)] {
+        for p in [
+            Params::new(1024, 256),
+            Params::new(2048, 512),
+            Params::new(4096, 1024),
+            Params::new(8192, 2048),
+        ] {
             assert_eq!(p.block_syms() * p.ndata(), BLOCK_CARRIERS);
             let m = Modem::new(p);
             let f = m.modulate_frame(&spec(Constellation::Qpsk, 1), &test_packets(6, 1));
@@ -1022,7 +1082,13 @@ mod tests {
 
     #[test]
     fn header_round_trip_and_rejects_corruption() {
-        let s = FrameSpec { cons: Constellation::Qam16, scheme: 2, session: 9, counter: 0x12_3456, k: 4000 };
+        let s = FrameSpec {
+            cons: Constellation::Qam16,
+            scheme: 2,
+            session: 9,
+            counter: 0x12_3456,
+            k: 4000,
+        };
         let b = s.header_bytes();
         assert_eq!(FrameSpec::parse(&b), Some(s));
         for i in 0..b.len() * 8 {
@@ -1034,7 +1100,12 @@ mod tests {
 
     #[test]
     fn clean_loopback_recovers_every_packet_in_every_numerology() {
-        for p in [Params::default(), Params::new(1024, 256), Params::new(2048, 512), Params::new(4096, 1024)] {
+        for p in [
+            Params::default(),
+            Params::new(1024, 256),
+            Params::new(2048, 512),
+            Params::new(4096, 1024),
+        ] {
             let m = Modem::new(p);
             for cons in [Constellation::Qpsk, Constellation::Qam16] {
                 let mut audio = vec![0f32; 5000];

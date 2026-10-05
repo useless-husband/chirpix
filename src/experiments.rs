@@ -79,7 +79,13 @@ pub fn ber_point(m: &Modem, cons: Constellation, esn0_db: f64, frames: usize, se
     let mut audio = vec![0f32; 3000];
     let mut sent = Vec::new();
     for i in 0..frames {
-        let spec = FrameSpec { cons, scheme: 0, session: 1, counter: i as u32, k: 100 };
+        let spec = FrameSpec {
+            cons,
+            scheme: 0,
+            session: 1,
+            counter: i as u32,
+            k: 100,
+        };
         let pk = random_packets(cons.packets_per_frame(), &mut rng);
         audio.extend(m.modulate_frame(&spec, &pk));
         sent.push(m.frame_bits(&spec, &pk));
@@ -120,7 +126,11 @@ pub fn ber_point(m: &Modem, cons: Constellation, esn0_db: f64, frames: usize, se
         esn0_db,
         uncoded_theory: uncoded_theory(cons, esn0_db),
         uncoded_modem: raw_err / raw_tot.max(1.0),
-        coded_bound: if cons == Constellation::Qpsk { conv::union_bound_ber(esn0_db).min(0.5) } else { 0.0 },
+        coded_bound: if cons == Constellation::Qpsk {
+            conv::union_bound_ber(esn0_db).min(0.5)
+        } else {
+            0.0
+        },
         coded_ideal: ideal_coded_ber(cons, esn0_db, frames * crate::modem::BLOCKS, seed ^ 0x1D),
         coded_modem: cod_err / cod_tot.max(1.0),
         packet_loss: 1.0 - delivered as f64 / (frames * cons.packets_per_frame()) as f64,
@@ -130,7 +140,9 @@ pub fn ber_point(m: &Modem, cons: Constellation, esn0_db: f64, frames: usize, se
 }
 
 pub fn ber_curve(cons: Constellation, esn0_dbs: &[f64], frames: usize, threads: usize) -> Vec<BerPoint> {
-    parallel_map(esn0_dbs.to_vec(), threads, |e| ber_point(modem(), cons, e, frames, 0xBE5 + (e * 10.0) as u64, &RxOptions::default()))
+    parallel_map(esn0_dbs.to_vec(), threads, |e| {
+        ber_point(modem(), cons, e, frames, 0xBE5 + (e * 10.0) as u64, &RxOptions::default())
+    })
 }
 
 /// Es/N0 at which a curve crosses `target`, by log-linear interpolation.
@@ -150,13 +162,23 @@ pub fn delivery(m: &Modem, cons: Constellation, ch: &Channel, frames: usize, opt
     let mut rng = Rng::new(ch.seed ^ 0xDE11);
     let mut audio = vec![0f32; 2000];
     for i in 0..frames {
-        let spec = FrameSpec { cons, scheme: 0, session: 2, counter: i as u32, k: 100 };
+        let spec = FrameSpec {
+            cons,
+            scheme: 0,
+            session: 2,
+            counter: i as u32,
+            k: 100,
+        };
         audio.extend(m.modulate_frame(&spec, &random_packets(cons.packets_per_frame(), &mut rng)));
     }
     // Keep the noise reference level that of the frames, not of padding.
     let rx = ch.apply(&audio);
     let (rep, _) = m.receive(&rx, FS, opts);
-    let snr = if rep.frames.is_empty() { f64::NAN } else { rep.frames.iter().map(|f| f.snr_db).sum::<f64>() / rep.frames.len() as f64 };
+    let snr = if rep.frames.is_empty() {
+        f64::NAN
+    } else {
+        rep.frames.iter().map(|f| f.snr_db).sum::<f64>() / rep.frames.len() as f64
+    };
     (rep.packets.len() as f64 / (frames * cons.packets_per_frame()) as f64, snr)
 }
 
@@ -182,21 +204,39 @@ pub fn sweep(title: &str, x_label: &str, note: &str, cases: Vec<(f64, String, Ch
     let points = parallel_map(cases, threads, |(x, label, ch)| {
         let (q, snr) = delivery(modem(), Constellation::Qpsk, &ch, frames, &RxOptions::default());
         let (h, _) = delivery(modem(), Constellation::Qam16, &ch, frames, &RxOptions::default());
-        SweepPoint { label, x, qpsk: q, qam16: h, rx_snr_db: snr }
+        SweepPoint {
+            label,
+            x,
+            qpsk: q,
+            qam16: h,
+            rx_snr_db: snr,
+        }
     });
-    Sweep { title: title.into(), x_label: x_label.into(), note: note.into(), points }
+    Sweep {
+        title: title.into(),
+        x_label: x_label.into(),
+        note: note.into(),
+        points,
+    }
 }
 
 /// The standard robustness sweeps. Each varies one impairment around a
 /// base channel and reports the share of packets delivered.
 pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
-    let base = |snr: f64| Channel { rt60: 0.3, drr_db: 8.0, ..Channel::awgn(snr, 100) };
+    let base = |snr: f64| Channel {
+        rt60: 0.3,
+        drr_db: 8.0,
+        ..Channel::awgn(snr, 100)
+    };
     let mut out = Vec::new();
     out.push(sweep(
         "Noise, no reverberation",
         "in-band SNR (dB)",
         "White noise only.",
-        [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 20.0].iter().map(|&s| (s, format!("{s:.0}"), Channel::awgn(s, 101))).collect(),
+        [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 20.0]
+            .iter()
+            .map(|&s| (s, format!("{s:.0}"), Channel::awgn(s, 101)))
+            .collect(),
         frames,
         threads,
     ));
@@ -206,7 +246,17 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "RT60 0.45 s, direct-to-reverberant ratio 5 dB.",
         [2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 20.0, 25.0, 30.0]
             .iter()
-            .map(|&s| (s, format!("{s:.0}"), Channel { rt60: 0.45, drr_db: 5.0, ..Channel::awgn(s, 102) }))
+            .map(|&s| {
+                (
+                    s,
+                    format!("{s:.0}"),
+                    Channel {
+                        rt60: 0.45,
+                        drr_db: 5.0,
+                        ..Channel::awgn(s, 102)
+                    },
+                )
+            })
             .collect(),
         frames,
         threads,
@@ -226,7 +276,20 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Direct-to-reverberant ratio",
         "DRR (dB)",
         "SNR 25 dB, RT60 0.5 s. Lower DRR means more of the sound arrives as echo.",
-        [15.0, 10.0, 6.0, 3.0, 0.0, -3.0, -6.0].iter().map(|&d| (d, format!("{d:.0}"), Channel { rt60: 0.5, drr_db: d, ..Channel::awgn(25.0, 103) })).collect(),
+        [15.0, 10.0, 6.0, 3.0, 0.0, -3.0, -6.0]
+            .iter()
+            .map(|&d| {
+                (
+                    d,
+                    format!("{d:.0}"),
+                    Channel {
+                        rt60: 0.5,
+                        drr_db: d,
+                        ..Channel::awgn(25.0, 103)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -234,7 +297,20 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Reverberation time",
         "RT60 (s)",
         "SNR 25 dB, DRR 3 dB.",
-        [0.1, 0.2, 0.3, 0.5, 0.8, 1.2].iter().map(|&r| (r, format!("{r:.1}"), Channel { rt60: r, drr_db: 3.0, ..Channel::awgn(25.0, 104) })).collect(),
+        [0.1, 0.2, 0.3, 0.5, 0.8, 1.2]
+            .iter()
+            .map(|&r| {
+                (
+                    r,
+                    format!("{r:.1}"),
+                    Channel {
+                        rt60: r,
+                        drr_db: 3.0,
+                        ..Channel::awgn(25.0, 104)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -242,7 +318,19 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Upper band limit",
         "low-pass corner (kHz)",
         "SNR 16 dB, light reverberation; the modem uses 1.03-6.98 kHz. Carriers above the corner are lost.",
-        [8.0, 7.0, 6.5, 6.0, 5.5, 5.0, 4.0].iter().map(|&k| (k, format!("{k:.1}"), Channel { band: Some((300.0, k * 1000.0)), ..base(16.0) })).collect(),
+        [8.0, 7.0, 6.5, 6.0, 5.5, 5.0, 4.0]
+            .iter()
+            .map(|&k| {
+                (
+                    k,
+                    format!("{k:.1}"),
+                    Channel {
+                        band: Some((300.0, k * 1000.0)),
+                        ..base(16.0)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -250,7 +338,19 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Lower band limit",
         "high-pass corner (kHz)",
         "SNR 16 dB, light reverberation.",
-        [0.5, 1.0, 1.5, 2.0, 2.5, 3.0].iter().map(|&k| (k, format!("{k:.1}"), Channel { band: Some((k * 1000.0, 10_000.0)), ..base(16.0) })).collect(),
+        [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+            .iter()
+            .map(|&k| {
+                (
+                    k,
+                    format!("{k:.1}"),
+                    Channel {
+                        band: Some((k * 1000.0, 10_000.0)),
+                        ..base(16.0)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -258,7 +358,19 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Clipping",
         "clip level (x RMS)",
         "SNR 25 dB, light reverberation. The signal's own peaks reach about 3.4 x RMS.",
-        [3.0, 2.0, 1.5, 1.0, 0.7, 0.5, 0.3].iter().map(|&c| (c, format!("{c:.1}"), Channel { clip: Some(c), ..base(25.0) })).collect(),
+        [3.0, 2.0, 1.5, 1.0, 0.7, 0.5, 0.3]
+            .iter()
+            .map(|&c| {
+                (
+                    c,
+                    format!("{c:.1}"),
+                    Channel {
+                        clip: Some(c),
+                        ..base(25.0)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -266,7 +378,19 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Impulsive noise",
         "clicks per second",
         "SNR 20 dB, light reverberation; each click is a 3 ms burst peaking 20 dB above the signal RMS.",
-        [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0].iter().map(|&r| (r, format!("{r:.1}"), Channel { impulses_per_s: r, ..base(20.0) })).collect(),
+        [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
+            .iter()
+            .map(|&r| {
+                (
+                    r,
+                    format!("{r:.1}"),
+                    Channel {
+                        impulses_per_s: r,
+                        ..base(20.0)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -274,7 +398,19 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
         "Recorder dropouts",
         "dropouts per minute",
         "SNR 20 dB, light reverberation; each dropout deletes 50 ms of audio.",
-        [0.0, 6.0, 15.0, 30.0, 60.0, 120.0].iter().map(|&r| (r, format!("{r:.0}"), Channel { dropouts_per_min: r, ..base(20.0) })).collect(),
+        [0.0, 6.0, 15.0, 30.0, 60.0, 120.0]
+            .iter()
+            .map(|&r| {
+                (
+                    r,
+                    format!("{r:.0}"),
+                    Channel {
+                        dropouts_per_min: r,
+                        ..base(20.0)
+                    },
+                )
+            })
+            .collect(),
         frames,
         threads,
     ));
@@ -295,13 +431,22 @@ pub struct NumerologyRow {
 /// modem at four numerologies, against echo and against clock offset.
 pub fn numerology_sweep(frames: usize, threads: usize) -> Vec<NumerologyRow> {
     use crate::modem::Params;
-    let candidates = vec![Params::new(1024, 256), Params::new(2048, 512), Params::new(4096, 1024), Params::new(8192, 2048)];
+    let candidates = vec![
+        Params::new(1024, 256),
+        Params::new(2048, 512),
+        Params::new(4096, 1024),
+        Params::new(8192, 2048),
+    ];
     parallel_map(candidates, threads, |p| {
         let m = Modem::new(p);
         let by_drr = [10.0, 5.0, 0.0, -5.0, -10.0]
             .iter()
             .map(|&d| {
-                let ch = Channel { rt60: 0.45, drr_db: d, ..Channel::awgn(25.0, 200) };
+                let ch = Channel {
+                    rt60: 0.45,
+                    drr_db: d,
+                    ..Channel::awgn(25.0, 200)
+                };
                 let (q, snr) = delivery(&m, Constellation::Qpsk, &ch, frames, &RxOptions::default());
                 let (h, _) = delivery(&m, Constellation::Qam16, &ch, frames, &RxOptions::default());
                 (d, q, h, snr)
@@ -310,14 +455,27 @@ pub fn numerology_sweep(frames: usize, threads: usize) -> Vec<NumerologyRow> {
         let by_ppm = [0.0, 50.0, 100.0, 200.0, 400.0]
             .iter()
             .map(|&ppm| {
-                let ch = Channel { rt60: 0.3, drr_db: 8.0, ppm, ..Channel::awgn(20.0, 201) };
-                let opts = RxOptions { no_resample: true, ..Default::default() };
+                let ch = Channel {
+                    rt60: 0.3,
+                    drr_db: 8.0,
+                    ppm,
+                    ..Channel::awgn(20.0, 201)
+                };
+                let opts = RxOptions {
+                    no_resample: true,
+                    ..Default::default()
+                };
                 let (q, _) = delivery(&m, Constellation::Qpsk, &ch, frames, &opts);
                 let (h, _) = delivery(&m, Constellation::Qam16, &ch, frames, &opts);
                 (ppm, q, h)
             })
             .collect();
-        NumerologyRow { params: p, byte_rate: p.byte_rate(Constellation::Qpsk), by_drr, by_ppm }
+        NumerologyRow {
+            params: p,
+            byte_rate: p.byte_rate(Constellation::Qpsk),
+            by_drr,
+            by_ppm,
+        }
     })
 }
 
@@ -377,13 +535,40 @@ impl Variant {
         cfg.design_seconds = design_seconds;
         match self {
             Variant::Windowed => (cfg, false),
-            Variant::FlatAtomic => (TxConfig { scheme: Scheme::Flat, ..cfg }, true),
-            Variant::CarouselAtomic => (TxConfig { scheme: Scheme::Carousel, ..cfg }, true),
+            Variant::FlatAtomic => (
+                TxConfig {
+                    scheme: Scheme::Flat,
+                    ..cfg
+                },
+                true,
+            ),
+            Variant::CarouselAtomic => (
+                TxConfig {
+                    scheme: Scheme::Carousel,
+                    ..cfg
+                },
+                true,
+            ),
             Variant::CarouselHalfAtomic => {
-                let c = TxConfig { scheme: Scheme::Carousel, ..cfg };
-                (TxConfig { k: Some(c.design_packets() / 2), ..c }, true)
+                let c = TxConfig {
+                    scheme: Scheme::Carousel,
+                    ..cfg
+                };
+                (
+                    TxConfig {
+                        k: Some(c.design_packets() / 2),
+                        ..c
+                    },
+                    true,
+                )
             }
-            Variant::CarouselProgressive => (TxConfig { scheme: Scheme::Carousel, ..cfg }, false),
+            Variant::CarouselProgressive => (
+                TxConfig {
+                    scheme: Scheme::Carousel,
+                    ..cfg
+                },
+                false,
+            ),
         }
     }
 }
@@ -430,7 +615,12 @@ pub fn run_e2e(job: &E2eJob) -> E2eRun {
                 (Some(p), Some(q))
             }
         };
-        points.push(QualityPoint { time: s.time, bytes: s.prefix_bytes, psnr: p, ssim: q });
+        points.push(QualityPoint {
+            time: s.time,
+            bytes: s.prefix_bytes,
+            psnr: p,
+            ssim: q,
+        });
         if job.keep_images.iter().any(|t| (t - s.time).abs() < 1e-6) {
             images.push((s.time, s.image.clone()));
         }
@@ -443,7 +633,11 @@ pub fn run_e2e(job: &E2eJob) -> E2eRun {
         cons: job.cons,
         source_bytes: tx.stream.len(),
         delivered: rec.packets.len() as f64 / sent_packets.max(1.0),
-        rx_snr_db: if frames.is_empty() { f64::NAN } else { frames.iter().map(|f| f.snr_db).sum::<f64>() / frames.len() as f64 },
+        rx_snr_db: if frames.is_empty() {
+            f64::NAN
+        } else {
+            frames.iter().map(|f| f.snr_db).sum::<f64>() / frames.len() as f64
+        },
         rx_ppm: rec.ppm,
         points,
         images,

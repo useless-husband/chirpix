@@ -44,7 +44,10 @@ struct Args {
 }
 
 fn parse_args(raw: &[String], flags: &[&str]) -> Result<Args, String> {
-    let mut a = Args { pos: Vec::new(), opt: HashMap::new() };
+    let mut a = Args {
+        pos: Vec::new(),
+        opt: HashMap::new(),
+    };
     let mut i = 0;
     while i < raw.len() {
         let s = &raw[i];
@@ -88,7 +91,13 @@ fn load_image(path: &str) -> Result<Image, String> {
     // would never be filled in.
     let f = img.w.max(img.h).div_ceil(1024).max(1);
     if f > 1 {
-        eprintln!("note: {path} is {}x{}; shrinking by {f} to {}x{}", img.w, img.h, img.w / f, img.h / f);
+        eprintln!(
+            "note: {path} is {}x{}; shrinking by {f} to {}x{}",
+            img.w,
+            img.h,
+            img.w / f,
+            img.h / f
+        );
     }
     Ok(img.downscale(f))
 }
@@ -114,7 +123,12 @@ fn cmd_encode(raw: &[String]) -> Result<(), String> {
     if !(2.0..=3600.0).contains(&seconds) || !(4.0..=3600.0).contains(&design) {
         return Err("--seconds must be 2..3600 and --design 4..3600".into());
     }
-    let cfg = TxConfig { cons, scheme, design_seconds: design, k: None };
+    let cfg = TxConfig {
+        cons,
+        scheme,
+        design_seconds: design,
+        k: None,
+    };
     let tx = Transmission::new(&img, &cfg);
     let mut audio = vec![0f32; FS as usize / 4];
     audio.extend(tx.audio(0, frames_for(seconds)));
@@ -124,12 +138,28 @@ fn cmd_encode(raw: &[String]) -> Result<(), String> {
     let p = modem().p;
     println!("image        {input}  {}x{}", img.w, img.h);
     println!("mode         {} rate 1/2, {:.0} bytes/s of payload", cons.name(), p.byte_rate(cons));
-    println!("stream       {} bytes in {} packets ({scheme:?} scheme, sized for {design:.0} s of listening)", tx.stream.len(), tx.k());
+    println!(
+        "stream       {} bytes in {} packets ({scheme:?} scheme, sized for {design:.0} s of listening)",
+        tx.stream.len(),
+        tx.k()
+    );
     if scheme == Scheme::Windowed {
-        let w: Vec<String> = tx.encoder.plan.windows.iter().map(|k| format!("{:.1} kB", (*k * chirpix::fountain::T) as f64 / 1000.0)).collect();
+        let w: Vec<String> = tx
+            .encoder
+            .plan
+            .windows
+            .iter()
+            .map(|k| format!("{:.1} kB", (*k * chirpix::fountain::T) as f64 / 1000.0))
+            .collect();
         println!("layers       {} (each decodable on its own, coarsest first)", w.join(", "));
     }
-    println!("audio        {} : {:.1} s, {} frames of {:.3} s, 48 kHz 16-bit mono", out.display(), audio.len() as f64 / FS as f64, frames_for(seconds), p.frame_seconds());
+    println!(
+        "audio        {} : {:.1} s, {} frames of {:.3} s, 48 kHz 16-bit mono",
+        out.display(),
+        audio.len() as f64 / FS as f64,
+        frames_for(seconds),
+        p.frame_seconds()
+    );
     Ok(())
 }
 
@@ -165,13 +195,29 @@ fn cmd_decode(raw: &[String]) -> Result<(), String> {
     let snr = frames.iter().map(|f| f.snr_db).sum::<f64>() / frames.len() as f64;
     let ok: usize = frames.iter().map(|f| f.packet_ok.iter().filter(|&&b| b).count()).sum();
     let total: usize = frames.iter().map(|f| f.packet_ok.len()).sum();
-    println!("frames       {} found, first at {:.2} s", frames.len(), frames[0].start as f64 / FS as f64);
-    println!("signal       {}, {} source packets, scheme {:?}", spec.cons.name(), spec.k, Scheme::from_u8(spec.scheme).unwrap_or(Scheme::Windowed));
-    println!("quality      {snr:.1} dB per carrier, recorder clock {:+.0} ppm, packets ok {ok}/{total}", rec.ppm);
+    println!(
+        "frames       {} found, first at {:.2} s",
+        frames.len(),
+        frames[0].start as f64 / FS as f64
+    );
+    println!(
+        "signal       {}, {} source packets, scheme {:?}",
+        spec.cons.name(),
+        spec.k,
+        Scheme::from_u8(spec.scheme).unwrap_or(Scheme::Windowed)
+    );
+    println!(
+        "quality      {snr:.1} dB per carrier, recorder clock {:+.0} ppm, packets ok {ok}/{total}",
+        rec.ppm
+    );
     let advice = recommend(snr);
     println!(
         "advice       {} ({} needs about {QAM16_MIN_SNR_DB:.0} dB)",
-        if advice == Constellation::Qam16 { "this channel can carry --mode fast" } else { "stay with --mode robust" },
+        if advice == Constellation::Qam16 {
+            "this channel can carry --mode fast"
+        } else {
+            "stay with --mode robust"
+        },
         Constellation::Qam16.name()
     );
     let mut times: Vec<f64> = (1..).map(|i| i as f64 * every).take_while(|t| *t < duration).collect();
@@ -206,7 +252,10 @@ fn cmd_decode(raw: &[String]) -> Result<(), String> {
         }
         last_bytes = s.prefix_bytes;
         println!("{line}");
-        csv += &format!("{:.2},{},{},{},{},{},{}\n", s.time, s.packets, s.rank, s.prefix_bytes, s.complete as u8, q.0, q.1);
+        csv += &format!(
+            "{:.2},{},{},{},{},{},{}\n",
+            s.time, s.packets, s.rank, s.prefix_bytes, s.complete as u8, q.0, q.1
+        );
     }
     std::fs::write(out.join("timeline.csv"), csv).map_err(|e| e.to_string())?;
     match snaps.last().and_then(|s| s.image.as_ref()) {
@@ -222,7 +271,9 @@ fn cmd_decode(raw: &[String]) -> Result<(), String> {
 
 fn cmd_simulate(raw: &[String]) -> Result<(), String> {
     let a = parse_args(raw, &[])?;
-    a.known(&["out", "channel", "snr", "rt60", "drr", "ppm", "lowpass", "highpass", "clip", "clicks", "dropouts", "skip", "rate", "seed"])?;
+    a.known(&[
+        "out", "channel", "snr", "rt60", "drr", "ppm", "lowpass", "highpass", "clip", "clicks", "dropouts", "skip", "rate", "seed",
+    ])?;
     let input = a.pos.first().ok_or("simulate: which WAV?")?;
     let w = wav::read(Path::new(input)).map_err(|e| format!("{input}: {e}"))?;
     if w.rate != FS {
@@ -284,7 +335,12 @@ fn cmd_simulate(raw: &[String]) -> Result<(), String> {
     let out = PathBuf::from(a.opt.get("out").cloned().unwrap_or_else(|| "rx.wav".into()));
     wav::write(&out, &y, rate).map_err(|e| format!("{}: {e}", out.display()))?;
     println!("channel      {}", ch.describe());
-    println!("recording    {} : {:.1} s at {rate} Hz (started {:.1} s into the transmission)", out.display(), y.len() as f64 / rate as f64, skip as f64 / FS as f64);
+    println!(
+        "recording    {} : {:.1} s at {rate} Hz (started {:.1} s into the transmission)",
+        out.display(),
+        y.len() as f64 / rate as f64,
+        skip as f64 / FS as f64
+    );
     Ok(())
 }
 
@@ -295,7 +351,10 @@ fn cmd_report(raw: &[String]) -> Result<(), String> {
     let threads = a.num("threads")?.unwrap_or(4.0).clamp(1.0, 4.0) as usize;
     let mut images = Vec::new();
     for p in &a.pos {
-        let name = Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| p.clone());
+        let name = Path::new(p)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.clone());
         images.push((name, load_image(p)?));
     }
     let image_note = if images.is_empty() {
@@ -305,15 +364,31 @@ fn cmd_report(raw: &[String]) -> Result<(), String> {
         }
         format!("Test pictures: three procedural images generated by the program ({w}x{h}).")
     } else {
-        format!("Test pictures: {}.", images.iter().map(|(n, i)| format!("{n} ({}x{})", i.w, i.h)).collect::<Vec<_>>().join(", "))
+        format!(
+            "Test pictures: {}.",
+            images
+                .iter()
+                .map(|(n, i)| format!("{n} ({}x{})", i.w, i.h))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     };
     let out = PathBuf::from(a.opt.get("out").cloned().unwrap_or_else(|| "out/report".into()));
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let r = generate(&ReportConfig { quick, images, image_note, threads });
+    let r = generate(&ReportConfig {
+        quick,
+        images,
+        image_note,
+        threads,
+    });
     std::fs::write(out.join("report.html"), &r.html).map_err(|e| e.to_string())?;
     std::fs::write(out.join("summary.txt"), &r.summary).map_err(|e| e.to_string())?;
     println!("{}", r.summary);
-    println!("report       {}  ({:.1} MB)", out.join("report.html").display(), r.html.len() as f64 / 1e6);
+    println!(
+        "report       {}  ({:.1} MB)",
+        out.join("report.html").display(),
+        r.html.len() as f64 / 1e6
+    );
     Ok(())
 }
 
@@ -325,7 +400,10 @@ fn cmd_testimage(raw: &[String]) -> Result<(), String> {
         return Err(format!("testimage: '{name}' is not scene, chart or clouds"));
     }
     let size = a.opt.get("size").cloned().unwrap_or_else(|| "384x256".into());
-    let (w, h) = size.split_once('x').and_then(|(w, h)| Some((w.parse::<usize>().ok()?, h.parse::<usize>().ok()?))).ok_or("--size wants WIDTHxHEIGHT")?;
+    let (w, h) = size
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse::<usize>().ok()?, h.parse::<usize>().ok()?)))
+        .ok_or("--size wants WIDTHxHEIGHT")?;
     if !(8..=2048).contains(&w) || !(8..=2048).contains(&h) {
         return Err("--size: each side must be 8..2048".into());
     }
@@ -339,11 +417,32 @@ fn cmd_info() {
     let p = modem().p;
     let f = |bin: usize| bin as f64 * p.carrier_spacing_hz();
     println!("sample rate      {FS} Hz");
-    println!("band             {:.0}-{:.0} Hz ({} carriers, {:.2} Hz apart)", f(p.first_bin()), f(p.first_bin() + p.ncar()), p.ncar(), p.carrier_spacing_hz());
-    println!("symbol           {:.1} ms + {:.1} ms cyclic prefix", p.nfft as f64 * 1e3 / FS as f64, p.cp as f64 * 1e3 / FS as f64);
-    println!("frame            {:.3} s ({} samples): chirp, training, header, {} data symbols", p.frame_seconds(), p.frame_len(), p.data_syms());
+    println!(
+        "band             {:.0}-{:.0} Hz ({} carriers, {:.2} Hz apart)",
+        f(p.first_bin()),
+        f(p.first_bin() + p.ncar()),
+        p.ncar(),
+        p.carrier_spacing_hz()
+    );
+    println!(
+        "symbol           {:.1} ms + {:.1} ms cyclic prefix",
+        p.nfft as f64 * 1e3 / FS as f64,
+        p.cp as f64 * 1e3 / FS as f64
+    );
+    println!(
+        "frame            {:.3} s ({} samples): chirp, training, header, {} data symbols",
+        p.frame_seconds(),
+        p.frame_len(),
+        p.data_syms()
+    );
     for c in [Constellation::Qpsk, Constellation::Qam16] {
-        println!("{:<16} {} packets of {} bytes per frame, {:.0} bytes/s", c.name(), c.packets_per_frame(), chirpix::fountain::T, p.byte_rate(c));
+        println!(
+            "{:<16} {} packets of {} bytes per frame, {:.0} bytes/s",
+            c.name(),
+            c.packets_per_frame(),
+            chirpix::fountain::T,
+            p.byte_rate(c)
+        );
     }
     println!("16-QAM threshold {QAM16_MIN_SNR_DB:.0} dB per carrier at the receiver");
 }

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: shell scripts parse
+        run: |
+          sh -n scripts/fetch_data.sh
+          sh -n scripts/loopback.sh
+          bash -n "跑跑看.command"
+      - name: build
+        run: cargo build --release
+      # Unit tests, then the end-to-end tests: pictures are generated at
+      # test time, sent through the simulated channel and recovered.
+      - name: tests
+        run: cargo test --release
+      - name: demo (quick report on generated pictures)
+        run: make demo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-report
+          path: |
+            out/demo/report.html
+            out/demo/summary.txt
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: tests
+        run: cargo test --release
+      # The over-the-air helper needs a sound device, which runners do not
+      # have; check at least that it compiles.
+      - name: audio helper type-checks
+        run: swiftc -typecheck scripts/audio_loop.swift

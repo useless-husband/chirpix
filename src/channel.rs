@@ -53,7 +53,12 @@ impl Channel {
         }
     }
     pub fn awgn(snr_db: f64, seed: u64) -> Channel {
-        Channel { name: format!("AWGN {snr_db} dB"), snr_db: Some(snr_db), seed, ..Channel::clean() }
+        Channel {
+            name: format!("AWGN {snr_db} dB"),
+            snr_db: Some(snr_db),
+            seed,
+            ..Channel::clean()
+        }
     }
     /// Quiet room, devices close together.
     pub fn good() -> Channel {
@@ -82,14 +87,14 @@ impl Channel {
             ..Channel::clean()
         }
     }
-    /// Across a noisy, echoing room (more echo than direct sound), with
+    /// Across a noisy, echoing room (as much echo as direct sound), with
     /// clicks and a recorder that drops audio.
     pub fn poor() -> Channel {
         Channel {
             name: "poor".into(),
-            snr_db: Some(8.0),
+            snr_db: Some(10.0),
             rt60: 0.6,
-            drr_db: -3.0,
+            drr_db: 0.0,
             ppm: 130.0,
             band: Some((600.0, 7_500.0)),
             impulses_per_s: 2.0,

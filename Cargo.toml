@@ -2,7 +2,7 @@
 name = "chirpix"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.82"
 license = "MIT"
 description = "Send a picture through the air as sound: a from-scratch OFDM acoustic modem, fountain code and progressive image codec"
 repository = "https://github.com/useless-husband/chirpix"
