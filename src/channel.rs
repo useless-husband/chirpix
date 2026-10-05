@@ -7,7 +7,7 @@
 
 use crate::dsp::{bandpass, filter_same, resample};
 use crate::fft::convolve;
-use crate::modem::{FS, NCAR, NFFT};
+use crate::modem::FS;
 use crate::util::Rng;
 
 #[derive(Clone, Debug)]
@@ -144,7 +144,7 @@ impl Channel {
         let rms = power.sqrt();
         if let Some(snr) = self.snr_db {
             // White noise over the whole 24 kHz; only NCAR/(NFFT/2) of it is in band.
-            let inband = NCAR as f64 / (NFFT / 2) as f64;
+            let inband = 0.25; // 6 kHz of the 24 kHz the noise covers
             let sigma = (power / 10f64.powf(snr / 10.0) / inband).sqrt();
             for v in y.iter_mut() {
                 *v += (sigma * rng.gauss()) as f32;

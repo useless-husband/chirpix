@@ -4,7 +4,7 @@
 use crate::codec;
 use crate::fountain::{Decoder, Encoder, Plan, Scheme, T};
 use crate::image::Image;
-use crate::modem::{modem, receive, Constellation, FrameSpec, RxOptions, RxReport, FRAME_LEN, FS};
+use crate::modem::{modem, receive, Constellation, FrameSpec, RxOptions, RxReport, FS};
 use crate::util::crc32;
 
 /// Share of the packets a listener collects in the design time that the
@@ -30,7 +30,7 @@ impl TxConfig {
     /// Whole frames a listener gets in the design time, assuming the
     /// frame they started in the middle of is lost.
     pub fn design_packets(&self) -> usize {
-        let frames = (self.design_seconds * FS as f64 / FRAME_LEN as f64).floor() as usize;
+        let frames = (self.design_seconds / modem().p.frame_seconds()).floor() as usize;
         frames.saturating_sub(1).max(1) * self.cons.packets_per_frame()
     }
 
@@ -80,7 +80,7 @@ impl Transmission {
 
     /// Audio for frames `first..first + count`.
     pub fn audio(&self, first: u32, count: usize) -> Vec<f32> {
-        let mut out = Vec::with_capacity(count * FRAME_LEN);
+        let mut out = Vec::with_capacity(count * modem().frame_len());
         for i in 0..count {
             out.extend(self.frame(first + i as u32));
         }
@@ -89,7 +89,7 @@ impl Transmission {
 }
 
 pub fn frames_for(seconds: f64) -> usize {
-    (seconds * FS as f64 / FRAME_LEN as f64).ceil() as usize
+    (seconds / modem().p.frame_seconds()).ceil() as usize
 }
 
 /// Everything recovered from one recording.
@@ -192,10 +192,10 @@ mod tests {
     #[test]
     fn sizes_follow_the_design_time() {
         let cfg = TxConfig::new(Constellation::Qpsk, Scheme::Windowed);
-        assert_eq!(cfg.design_packets(), 300);
-        assert_eq!(cfg.source_packets(), 117);
+        assert_eq!(cfg.design_packets(), 252);
+        assert_eq!(cfg.source_packets(), 98);
         let cfg = TxConfig::new(Constellation::Qam16, Scheme::Carousel);
-        assert_eq!(cfg.source_packets(), 600);
+        assert_eq!(cfg.source_packets(), 504);
     }
 
     #[test]
@@ -208,9 +208,9 @@ mod tests {
         let audio = tx.audio(1000, frames_for(22.0));
         let rec = receive_recording(&audio[20_000..], FS, &RxOptions::default());
         assert_eq!(rec.spec.unwrap().k as usize, tx.k());
-        let snaps = rec.snapshots(&[2.0, 6.0, 12.0, 21.0], false);
+        let snaps = rec.snapshots(&[4.0, 8.0, 14.0, 21.5], false);
         let q: Vec<f64> = snaps.iter().map(|s| s.image.as_ref().map(|i| psnr(&img, i)).unwrap_or(0.0)).collect();
-        assert!(q[0] > 10.0, "a first picture within 2 s: {q:?}");
+        assert!(q[0] > 10.0, "a first picture within 4 s: {q:?}");
         assert!(q.windows(2).all(|p| p[1] >= p[0]), "quality must not fall: {q:?}");
         assert!(snaps[3].complete, "complete after the design time");
         assert!(snaps[3].image.as_ref().unwrap() == &codec::decode(&tx.stream).unwrap());

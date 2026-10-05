@@ -6,7 +6,7 @@ use crate::conv;
 use crate::fountain::{Scheme, T};
 use crate::image::{psnr, ssim, Image};
 use crate::link::{frames_for, receive_recording, Transmission, TxConfig};
-use crate::modem::{modem, Constellation, FrameSpec, RxOptions, CARRIER_AMP, FRAME_LEN, FS, NFFT};
+use crate::modem::{modem, Constellation, FrameSpec, Modem, RxOptions, FS};
 use crate::util::{parallel_map, q_func, Rng};
 
 #[derive(Clone, Debug, Default)]
@@ -74,8 +74,7 @@ fn ideal_coded_ber(cons: Constellation, esn0_db: f64, blocks: usize, seed: u64) 
 }
 
 /// One point of the error-rate curve for the complete modem in white noise.
-pub fn ber_point(cons: Constellation, esn0_db: f64, frames: usize, seed: u64, opts: &RxOptions) -> BerPoint {
-    let m = modem();
+pub fn ber_point(m: &Modem, cons: Constellation, esn0_db: f64, frames: usize, seed: u64, opts: &RxOptions) -> BerPoint {
     let mut rng = Rng::new(seed);
     let mut audio = vec![0f32; 3000];
     let mut sent = Vec::new();
@@ -87,7 +86,7 @@ pub fn ber_point(cons: Constellation, esn0_db: f64, frames: usize, seed: u64, op
     }
     audio.extend(vec![0f32; 3000]);
     let g = 10f64.powf(esn0_db / 10.0);
-    let sigma = (CARRIER_AMP * CARRIER_AMP * NFFT as f64 / (4.0 * g)).sqrt();
+    let sigma = (m.p.carrier_amp().powi(2) * m.p.nfft as f64 / (4.0 * g)).sqrt();
     for v in audio.iter_mut() {
         *v += (sigma * rng.gauss()) as f32;
     }
@@ -111,8 +110,8 @@ pub fn ber_point(cons: Constellation, esn0_db: f64, frames: usize, seed: u64, op
     }
     let lost = seen.iter().filter(|&&s| !s).count();
     // A frame that was never found counts as coin-flip bits.
-    let per_frame_coded = (cons.coded_bits_per_block() * 4) as f64;
-    let per_frame_info = (cons.info_bits_per_block() * 4) as f64;
+    let per_frame_coded = (cons.coded_bits_per_block() * crate::modem::BLOCKS) as f64;
+    let per_frame_info = (cons.info_bits_per_block() * crate::modem::BLOCKS) as f64;
     raw_err += 0.5 * lost as f64 * per_frame_coded;
     raw_tot += lost as f64 * per_frame_coded;
     cod_err += 0.5 * lost as f64 * per_frame_info;
@@ -122,7 +121,7 @@ pub fn ber_point(cons: Constellation, esn0_db: f64, frames: usize, seed: u64, op
         uncoded_theory: uncoded_theory(cons, esn0_db),
         uncoded_modem: raw_err / raw_tot.max(1.0),
         coded_bound: if cons == Constellation::Qpsk { conv::union_bound_ber(esn0_db).min(0.5) } else { 0.0 },
-        coded_ideal: ideal_coded_ber(cons, esn0_db, frames * 4, seed ^ 0x1D),
+        coded_ideal: ideal_coded_ber(cons, esn0_db, frames * crate::modem::BLOCKS, seed ^ 0x1D),
         coded_modem: cod_err / cod_tot.max(1.0),
         packet_loss: 1.0 - delivered as f64 / (frames * cons.packets_per_frame()) as f64,
         frames_lost: lost,
@@ -131,7 +130,7 @@ pub fn ber_point(cons: Constellation, esn0_db: f64, frames: usize, seed: u64, op
 }
 
 pub fn ber_curve(cons: Constellation, esn0_dbs: &[f64], frames: usize, threads: usize) -> Vec<BerPoint> {
-    parallel_map(esn0_dbs.to_vec(), threads, |e| ber_point(cons, e, frames, 0xBE5 + (e * 10.0) as u64, &RxOptions::default()))
+    parallel_map(esn0_dbs.to_vec(), threads, |e| ber_point(modem(), cons, e, frames, 0xBE5 + (e * 10.0) as u64, &RxOptions::default()))
 }
 
 /// Es/N0 at which a curve crosses `target`, by log-linear interpolation.
@@ -147,8 +146,7 @@ pub fn crossing(points: &[(f64, f64)], target: f64) -> Option<f64> {
 }
 
 /// Fraction of packets delivered when `frames` frames go through `ch`.
-pub fn delivery(cons: Constellation, ch: &Channel, frames: usize, opts: &RxOptions) -> (f64, f64) {
-    let m = modem();
+pub fn delivery(m: &Modem, cons: Constellation, ch: &Channel, frames: usize, opts: &RxOptions) -> (f64, f64) {
     let mut rng = Rng::new(ch.seed ^ 0xDE11);
     let mut audio = vec![0f32; 2000];
     for i in 0..frames {
@@ -157,7 +155,7 @@ pub fn delivery(cons: Constellation, ch: &Channel, frames: usize, opts: &RxOptio
     }
     // Keep the noise reference level that of the frames, not of padding.
     let rx = ch.apply(&audio);
-    let (rep, _) = crate::modem::receive(&rx, FS, opts);
+    let (rep, _) = m.receive(&rx, FS, opts);
     let snr = if rep.frames.is_empty() { f64::NAN } else { rep.frames.iter().map(|f| f.snr_db).sum::<f64>() / rep.frames.len() as f64 };
     (rep.packets.len() as f64 / (frames * cons.packets_per_frame()) as f64, snr)
 }
@@ -182,8 +180,8 @@ pub struct Sweep {
 
 pub fn sweep(title: &str, x_label: &str, note: &str, cases: Vec<(f64, String, Channel)>, frames: usize, threads: usize) -> Sweep {
     let points = parallel_map(cases, threads, |(x, label, ch)| {
-        let (q, snr) = delivery(Constellation::Qpsk, &ch, frames, &RxOptions::default());
-        let (h, _) = delivery(Constellation::Qam16, &ch, frames, &RxOptions::default());
+        let (q, snr) = delivery(modem(), Constellation::Qpsk, &ch, frames, &RxOptions::default());
+        let (h, _) = delivery(modem(), Constellation::Qam16, &ch, frames, &RxOptions::default());
         SweepPoint { label, x, qpsk: q, qam16: h, rx_snr_db: snr }
     });
     Sweep { title: title.into(), x_label: x_label.into(), note: note.into(), points }
@@ -283,6 +281,46 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
     out
 }
 
+#[derive(Clone, Debug)]
+pub struct NumerologyRow {
+    pub params: crate::modem::Params,
+    pub byte_rate: f64,
+    /// (DRR dB, QPSK delivery, 16-QAM delivery, receiver SNR) at RT60 0.45 s, noise SNR 25 dB.
+    pub by_drr: Vec<(f64, f64, f64, f64)>,
+    /// (ppm, QPSK delivery, 16-QAM delivery) with the resampling pass disabled, light reverberation.
+    pub by_ppm: Vec<(f64, f64, f64)>,
+}
+
+/// The design-space sweep behind the choice of symbol length: the same
+/// modem at four numerologies, against echo and against clock offset.
+pub fn numerology_sweep(frames: usize, threads: usize) -> Vec<NumerologyRow> {
+    use crate::modem::Params;
+    let candidates = vec![Params::new(1024, 256), Params::new(2048, 512), Params::new(4096, 1024), Params::new(8192, 2048)];
+    parallel_map(candidates, threads, |p| {
+        let m = Modem::new(p);
+        let by_drr = [10.0, 5.0, 0.0, -5.0, -10.0]
+            .iter()
+            .map(|&d| {
+                let ch = Channel { rt60: 0.45, drr_db: d, ..Channel::awgn(25.0, 200) };
+                let (q, snr) = delivery(&m, Constellation::Qpsk, &ch, frames, &RxOptions::default());
+                let (h, _) = delivery(&m, Constellation::Qam16, &ch, frames, &RxOptions::default());
+                (d, q, h, snr)
+            })
+            .collect();
+        let by_ppm = [0.0, 50.0, 100.0, 200.0, 400.0]
+            .iter()
+            .map(|&ppm| {
+                let ch = Channel { rt60: 0.3, drr_db: 8.0, ppm, ..Channel::awgn(20.0, 201) };
+                let opts = RxOptions { no_resample: true, ..Default::default() };
+                let (q, _) = delivery(&m, Constellation::Qpsk, &ch, frames, &opts);
+                let (h, _) = delivery(&m, Constellation::Qam16, &ch, frames, &opts);
+                (ppm, q, h)
+            })
+            .collect();
+        NumerologyRow { params: p, byte_rate: p.byte_rate(Constellation::Qpsk), by_drr, by_ppm }
+    })
+}
+
 // ---------------------------------------------------------------- end to end
 
 #[derive(Clone)]
@@ -369,15 +407,16 @@ pub fn run_e2e(job: &E2eJob) -> E2eRun {
     let tx = Transmission::new(&job.image, &cfg);
     // Transmit a little before the listener starts and after they stop,
     // then cut the recording to exactly [start, start + listen].
-    let first_frame = (job.start * FS as f64 / FRAME_LEN as f64).floor() as usize;
+    let fl = modem().frame_len();
+    let first_frame = (job.start * FS as f64 / fl as f64).floor() as usize;
     let nframes = frames_for(job.listen + 1.0) + 2;
     let audio = tx.audio(first_frame as u32, nframes);
     let received = job.channel.apply(&audio);
-    let skip = ((job.start * FS as f64) as usize).saturating_sub(first_frame * FRAME_LEN);
+    let skip = ((job.start * FS as f64) as usize).saturating_sub(first_frame * fl);
     let end = (skip + (job.listen * FS as f64) as usize).min(received.len());
     let rec = receive_recording(&received[skip.min(end)..end], FS, &RxOptions::default());
     let snaps = rec.snapshots(&job.times, atomic);
-    let sent_packets = (job.listen * FS as f64 / FRAME_LEN as f64) * cfg.cons.packets_per_frame() as f64;
+    let sent_packets = (job.listen * FS as f64 / fl as f64) * cfg.cons.packets_per_frame() as f64;
     let mut points = Vec::new();
     let mut images = Vec::new();
     let mut cache: Option<(usize, f64, f64)> = None;
