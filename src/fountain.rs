@@ -7,8 +7,13 @@
 //!
 //! Unequal protection uses *expanding windows* (Sejdinovic et al. 2009):
 //! window i is the first `k_i` source packets, k_1 < k_2 < ... = K, and
-//! each coded packet is drawn from one window. The first packets of the
-//! stream are in every window, so they are recovered first.
+//! each coded packet is drawn from one window, on a fixed repeating
+//! schedule. The start of the stream is in every window, so it is
+//! recovered first. A coded packet is a dense random combination of its
+//! window, with one exception: where a window adds only a handful of
+//! packets to the one before it, those few are sent uncoded in turn,
+//! because the one or two extra packets random combinations need would be
+//! a large share of so small a layer.
 //!
 //! K is at most a few hundred here, so the decoder does full Gaussian
 //! elimination over GF(2) (maximum-likelihood erasure decoding) instead

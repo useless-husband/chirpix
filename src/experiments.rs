@@ -264,11 +264,13 @@ pub fn robustness_sweeps(frames: usize, threads: usize) -> Vec<Sweep> {
     out.push(sweep(
         "Recorder clock offset",
         "offset (ppm)",
-        "SNR 16 dB, RT60 0.3 s, DRR 8 dB.",
-        [-1000.0, -400.0, -200.0, -100.0, -50.0, 0.0, 50.0, 100.0, 200.0, 400.0, 1000.0]
-            .iter()
-            .map(|&p| (p, format!("{p:+.0}"), Channel { ppm: p, ..base(16.0) }))
-            .collect(),
+        "SNR 16 dB, RT60 0.3 s, DRR 8 dB. The receiver searches +-600 ppm; consumer sound hardware is typically within +-100.",
+        [
+            -2000.0, -1000.0, -400.0, -200.0, -100.0, -50.0, 0.0, 50.0, 100.0, 200.0, 400.0, 1000.0, 2000.0,
+        ]
+        .iter()
+        .map(|&p| (p, format!("{p:+.0}"), Channel { ppm: p, ..base(16.0) }))
+        .collect(),
         frames,
         threads,
     ));
@@ -654,6 +656,29 @@ mod tests {
         assert!((uncoded_theory(Constellation::Qpsk, 9.80) / 1e-3 - 1.0).abs() < 0.03);
         // 16-QAM: BER 1e-3 at Eb/N0 10.5 dB, i.e. Es/N0 16.5 dB.
         assert!((uncoded_theory(Constellation::Qam16, 16.55) / 1e-3 - 1.0).abs() < 0.08);
+    }
+
+    #[test]
+    fn modem_in_white_noise_stays_close_to_the_ideal_receiver() {
+        // Comfortably above threshold nothing may be lost: no missed
+        // frame, no failed packet (QPSK at 7 dB, 16-QAM at 13 dB).
+        for (cons, esn0) in [(Constellation::Qpsk, 7.0), (Constellation::Qam16, 13.0)] {
+            let pt = ber_point(modem(), cons, esn0, 30, 4242, &RxOptions::default());
+            assert_eq!((pt.frames_lost, pt.packet_loss), (0, 0.0), "{cons:?} at {esn0} dB");
+            // Raw decisions within about 2 dB of the textbook curve.
+            assert!(
+                pt.uncoded_modem < uncoded_theory(cons, esn0 - 2.0),
+                "{cons:?}: raw BER {:.3e}",
+                pt.uncoded_modem
+            );
+        }
+        // The ideal receiver delivers every QPSK block from about 4 dB;
+        // the modem must do so within 1.5 dB of that.
+        let pt = ber_point(modem(), Constellation::Qpsk, 5.5, 30, 4243, &RxOptions::default());
+        assert!(pt.packet_loss < 0.02, "QPSK packet loss {:.3} at 5.5 dB", pt.packet_loss);
+        // And below the code's threshold it must fail cleanly rather than deliver bad packets.
+        let pt = ber_point(modem(), Constellation::Qpsk, 1.0, 10, 4244, &RxOptions::default());
+        assert!(pt.packet_loss > 0.95);
     }
 
     #[test]

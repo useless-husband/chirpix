@@ -1180,6 +1180,50 @@ mod tests {
     }
 
     #[test]
+    fn arbitrary_slices_and_damage_never_panic_or_yield_wrong_packets() {
+        let m = modem();
+        let mut audio = Vec::new();
+        let mut sent = std::collections::HashMap::new();
+        for counter in 0..4 {
+            let sp = spec(Constellation::Qam16, counter);
+            let pk = test_packets(12, 50 + counter as u64);
+            for (i, p) in pk.iter().enumerate() {
+                sent.insert(sp.packet_id(i), *p);
+            }
+            audio.extend(m.modulate_frame(&sp, &pk));
+        }
+        let mut rng = Rng::new(4711);
+        for trial in 0..60 {
+            let a = rng.below(audio.len());
+            let b = (a + rng.below(audio.len() - a + 1)).min(audio.len());
+            let mut x = audio[a..b].to_vec();
+            // Damage: a burst of noise, a deleted stretch, a gain change.
+            if !x.is_empty() {
+                let at = rng.below(x.len());
+                for v in x.iter_mut().skip(at).take(3000) {
+                    *v += 0.5 * rng.gauss() as f32;
+                }
+                let cut = rng.below(x.len());
+                let len = rng.below(5000).min(x.len() - cut);
+                x.drain(cut..cut + len);
+                let g = 0.05 + rng.f64() as f32;
+                for v in x.iter_mut() {
+                    *v *= g;
+                }
+            }
+            let rep = m.demodulate(&x, &RxOptions::default());
+            for p in &rep.packets {
+                assert_eq!(
+                    sent.get(&p.id),
+                    Some(&p.payload),
+                    "trial {trial} (seed 4711): packet {} is not what was sent",
+                    p.id
+                );
+            }
+        }
+    }
+
+    #[test]
     fn silence_and_noise_produce_no_packets() {
         let m = modem();
         let mut rng = Rng::new(77);

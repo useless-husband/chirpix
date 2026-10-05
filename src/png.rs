@@ -97,6 +97,9 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     }
     let bpp = (channels * depth as usize).div_ceil(8); // bytes per pixel for filtering
     let stride = (w * channels * depth as usize).div_ceil(8);
+    if (stride + 1) * h > 400 << 20 {
+        return Err("PNG is too large (more than 400 MB of pixel data)".into());
+    }
     let raw = zlib_decompress(&idat, (stride + 1) * h)?;
     if raw.len() != (stride + 1) * h {
         return Err("PNG pixel data has the wrong size".into());
