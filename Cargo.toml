@@ -1,0 +1,22 @@
+[package]
+name = "chirpix"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+description = "Send a picture through the air as sound: a from-scratch OFDM acoustic modem, fountain code and progressive image codec"
+repository = "https://github.com/useless-husband/chirpix"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = false
+
+# The tests push minutes of audio through the modem; unoptimised they are
+# unusably slow, so plain `cargo test` is optimised too.
+[profile.dev]
+opt-level = 2
+
+[profile.test]
+opt-level = 3

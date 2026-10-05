@@ -1,0 +1,5 @@
+/target/
+/data/
+/out/
+.DS_Store
+*.wav
