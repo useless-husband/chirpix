@@ -18,6 +18,8 @@ and then to measure honestly what that costs.
 > **Status of the evidence.** Every number below comes from a *simulated* loudspeaker-room-microphone
 > channel. The signal has also been played and recorded through the real macOS audio stack via a virtual
 > loopback device (no acoustic path). It has **not** been tested through a real loudspeaker and microphone.
+> The analogue SSTV baseline, and every number that involves it, was run on a cloud Linux VM with four
+> vCPUs; the chirpix figures re-ran there and came out identical to the ones measured on an Apple M5.
 
 [繁體中文說明](README.zh-TW.md) · [Design notes](docs/DESIGN.md) · [給初學者的導讀](docs/導讀.zh-TW.md)
 
@@ -28,14 +30,19 @@ and then to measure honestly what that costs.
 Four Kodak test photographs (768x512), an ordinary simulated room ("fair": SNR 14 dB in band, RT60 0.45 s,
 direct-to-reverberant ratio 5 dB, recorder clock 70 ppm slow, occasional clicks), the listener starting at
 four arbitrary moments. Mean PSNR over RGB / SSIM on luma; in brackets, how many of the 16 runs had any
-picture. A run without a picture scores as a flat grey image (12.4 dB / 0.41).
+picture. A run without a picture scores as a flat grey image (12.4 dB / 0.41). The first four rows share the
+modem and the codec and differ only in packet scheduling; the last three are analogue SSTV (Robot 36) through
+the same channel, seeds and start times. 36.9 s is the length of one SSTV picture with its header.
 
-| Same modem, codec and audio time; only packet scheduling differs | 5 s | 15 s | 30 s | 75 s |
-|---|---|---|---|---|
-| **chirpix** (windowed fountain, 9.1 kB stream) | 19.1 dB / 0.48 (16) | 20.5 / 0.51 (16) | 22.3 / 0.57 (16) | 26.4 / 0.74 (16) |
-| Progressive stream sent in order, repeated | 12.4 / 0.41 (0) | 14.6 / 0.44 (4) | 15.7 / 0.48 (4) | 31.1 / 0.87 (16) |
-| Ordinary fountain code, shown when complete | (0) | (0) | (0) | 30.9 / 0.87 (16) |
-| Plain 27 kB file, one pass in 75 s | (0) | (0) | (0) | **31.1 / 0.87** (16) |
+| Scheme | 5 s | 15 s | 30 s | 36.9 s | 75 s |
+|---|---|---|---|---|---|
+| **chirpix** (windowed fountain, 9.1 kB stream) | 19.1 dB / 0.48 (16) | 20.5 / 0.51 (16) | 22.3 / 0.57 (16) | 22.8 / 0.60 (16) | 26.4 / 0.74 (16) |
+| Progressive stream sent in order, repeated | 12.4 / 0.41 (0) | 14.6 / 0.44 (4) | 15.7 / 0.48 (4) | 18.2 / 0.53 (8) | 31.1 / 0.87 (16) |
+| Ordinary fountain code, shown when complete | (0) | (0) | (0) | (0) | 30.9 / 0.87 (16) |
+| Plain 27 kB file, one pass in 75 s | (0) | (0) | (0) | (0) | **31.1 / 0.87** (16) |
+| SSTV Robot 36 (320x240), shown from a header on | (0) | 12.4 / 0.41 (4) | 12.9 / 0.40 (8) | 13.3 / 0.40 (16) | 16.9 / 0.42 (16) |
+| SSTV, also keeping lines heard before the header | (0) | 12.8 / 0.41 (4) | 13.9 / 0.41 (8) | 16.9 / 0.41 (16) | 16.9 / 0.42 (16) |
+| SSTV, listener there when a picture starts | 12.6 / 0.40 (16) | 13.2 / 0.39 (16) | 15.1 / 0.41 (16) | 16.9 / 0.41 (16) | 16.9 / 0.41 (16) |
 
 Read it both ways. Up to a minute chirpix is the only scheme that reliably shows anything. At 75 s on a
 channel that loses nothing, **the plain file wins by 4.7 dB**: it spends all its airtime on new data, while
@@ -45,7 +52,27 @@ chirpix spends two thirds of it making the early layers arrive early (the limit 
 On the "poor" channel (SNR 10 dB, RT60 0.6 s, as much echo as direct sound, clicks, a recorder that drops
 audio, 18% of packets lost) the order reverses at every time: chirpix 17.4 / 20.0 / 22.2 / 24.8 dB with a
 picture in 13, 16, 16, 16 of 16 runs; the plain file never completes within 75 s; the in-order stream
-reaches 20.7 dB.
+reaches 20.7 dB; SSTV 14.2 dB at 75 s (a picture in all 16 runs).
+
+**Against analogue SSTV**, the way radio amateurs send pictures, chirpix wins in all three simulated rooms
+at every time. When one whole SSTV picture has been heard (36.9 s) it is 16.9 dB against chirpix's 22.8 dB on
+"fair", and at 75 s it is still 16.9 against 26.4. Most of that is room echo: an FM discriminator has no
+defence against echo a third as strong as the direct sound (the OFDM modem's 43 ms cyclic prefix is exactly
+that defence). The rest is resolution: 320x240 caps the four photographs at 25.7 dB on average, and sent
+through no channel at all they come back at 22.2 dB. Where SSTV wins:
+
+- **It has no threshold.** In white noise without echo the modem stops delivering packets between 4 and 2 dB
+  and chirpix shows nothing; SSTV still gives 15.7 dB at 2 dB and 14.2 dB at 0 dB. (SSIM rates those
+  noisy pictures below a blank grey screen; PSNR rates them above it.)
+- **No start-up delay** for a listener who is there when a picture starts: the first line is on screen about
+  a second later. But after 5 s that is 27 lines at the top (12.6 dB), against chirpix's whole coarse picture
+  (19.1 dB). A listener who joins mid-picture, as in the table, waits up to 38 s for the next header, unless
+  the receiver keeps the lines it heard before it (second SSTV row).
+- It degrades gradually: from "good" to "poor" it slides from 19.7 to 14.2 dB at 75 s, where the plain file
+  and the ordinary fountain code drop from 35 dB to nothing.
+
+The SSTV encoder matches pySSTV sample for sample, and the decoder was checked against audio from it; details
+in [DESIGN.md](docs/DESIGN.md#analogue-baseline-sstv-robot-36).
 
 ![PSNR against listening time and against start time](docs/curves.png)
 
@@ -53,14 +80,16 @@ The lower chart is the second claim: after 30 s of listening, chirpix gives 24.8
 listener starts; the in-order stream gives a picture only if the 30 s happen to include the start of its
 loop (and then a better one, up to 34 dB).
 
-All of this is reproduced by `make data && make report` (about 90 s on four cores of an Apple M5 shared
-with other jobs), which writes a self-contained `out/report/report.html`.
+All of this is reproduced by `make data && make report`, which writes a self-contained
+`out/report/report.html`: about 90 s on four cores of an Apple M5 (shared with other jobs) before the SSTV
+baseline was added; 5 min 8 s with it on the 4-vCPU cloud Linux VM (3 min 52 s there without it).
 
 ## Try it
 
 ```
 make build          # needs Rust 1.82+ (https://rustup.rs)
-make test           # 74 tests, a few seconds once compiled
+make test           # 84 tests, a few seconds once compiled
+make sstv-check     # SSTV against pySSTV and the sstv package (needs python3 and PyPI)
 make demo           # small report on built-in pictures -> out/demo/report.html
 make data report    # four Kodak photographs (2.8 MB, SHA-256 checked) and the full report
 ```
@@ -97,6 +126,38 @@ advice       stay with --mode robust (16-QAM needs about 12 dB)
      84.8      288          9095  (unchanged)  PSNR 33.57 dB  SSIM 0.9059
 ```
 
+The same picture as analogue SSTV through the same room (real output; the WAV starts with 0.25 s of silence):
+
+```
+$ chirpix sstv-encode data/kodim23.png -o sstv.wav --repeat 3
+image        data/kodim23.png  768x512 -> 320x240
+mode         Robot 36 (VIS code 8), 150 ms per line, 36.91 s per picture with header, colour Spec
+audio        sstv.wav : 111.2 s, 3 picture(s), 48 kHz 16-bit mono
+
+$ chirpix simulate sstv.wav -o rx.wav --channel fair --skip 7.3 --rate 44100
+channel      SNR 14 dB, RT60 0.45 s, DRR 5 dB, clock -70 ppm, band 0.4-9.0 kHz, 0.5 clicks/s at +20 dB
+recording    rx.wav : 103.9 s at 44100 Hz (started 7.3 s into the transmission)
+
+$ chirpix sstv-decode rx.wav -o decoded-sstv --every 15 --ref data/kodim23.png
+recording    rx.wav: 103.9 s at 44100 Hz, 1 channel(s)
+header       at 29.86 s: VIS code 8
+header       at 66.77 s: VIS code 8
+lines        677 sync pulses, 679 lines placed (199 counted back from a header), clock -68 ppm
+noise        240 Hz rms on the sync pulses; pixels measured over 15.0 widths (Y), 59.9 (chroma)
+
+  seconds  rows  picture
+     15.0     0  nothing yet
+     30.0     0  nothing yet
+     45.0    94  decoded-sstv/t0045.png  PSNR 13.53 dB  SSIM 0.6519
+     60.0   194  decoded-sstv/t0060.png  PSNR 15.86 dB  SSIM 0.6256
+     75.0   240  decoded-sstv/t0075.png  PSNR 17.94 dB  SSIM 0.6286  [all rows]
+     90.0   240  decoded-sstv/t0090.png  PSNR 17.89 dB  SSIM 0.6293
+    103.9   240  decoded-sstv/t0104.png  PSNR 17.86 dB  SSIM 0.6282
+```
+
+With `--placement buffered` the 199 lines heard before the first header are placed when it arrives: all 240
+rows at 45 s (17.90 dB).
+
 ### Over the air (not verified by the author)
 
 Two devices: play `tx.wav` on one (any player), record on a phone with any recorder app for 30 s or more,
@@ -131,6 +192,9 @@ picture ── codec ──► embedded byte stream ── fountain ──► en
   the equations by Gaussian elimination and uses the longest known prefix.
 - **Image codec.** YCbCr, 9/7 wavelet, bit-planes coded through quadtrees with an adaptive binary range
   coder. The stream is embedded: cut it anywhere and it decodes.
+- **Analogue baseline** (`src/sstv.rs`). Robot 36 SSTV: encoder to the published timing, and a decoder
+  (FM discriminator, VIS header, line sync with clock-offset fit, separator parity across dropouts,
+  smoothing chosen from the measured noise).
 
 [docs/DESIGN.md](docs/DESIGN.md) has the frame format, the reasoning and the dead ends.
 
@@ -197,8 +261,13 @@ with JPEG 2000 or any other codec.
 - Low rate: 372 B/s (QPSK). A 768x512 photograph gets 9 kB in 75 s, about 26 dB on average.
 - The first picture is very coarse (0.4 kB) and needs two whole frames: typically 4-5 s, sometimes more.
 - Long symbols make it sensitive to movement and to clock offsets beyond ±600 ppm.
-- A recorder dropout loses the rest of that frame. A streaming (real-time) receiver, an ultrasonic mode and
-  an analogue SSTV baseline were not built.
+- A recorder dropout loses the rest of that frame. A streaming (real-time) receiver and an ultrasonic mode
+  were not built.
+- The SSTV baseline is one mode (Robot 36) and one receiver, mine. Its timing matches two independent
+  implementations, but its decoder was compared with another only on clean audio, and its smoothing was
+  tuned for PSNR (on the built-in pictures). It is compared at equal average power: a constant-envelope
+  signal could be played about 7.6 dB louder for the same peak level. A person looking at a noisy SSTV
+  picture may judge it more kindly than PSNR and SSIM against the full-size original do.
 - The decoder reads the first channel of a multi-channel recording and needs WAV input.
 - Pictures larger than 1024 pixels on a side are shrunk before encoding.
 
@@ -211,6 +280,8 @@ with JPEG 2000 or any other codec.
   them; what it adds is the layering above the modem.
 - [Fldigi](http://www.w1hkj.com/) and analogue SSTV send pictures over audio channels in amateur radio.
   SSTV degrades gracefully with noise but takes a fixed time per picture and has no notion of joining late.
+  Robot 36 is measured here as a baseline; [pySSTV](https://github.com/dnet/pySSTV) and the
+  [sstv](https://pypi.org/project/sstv/) package were used to check it.
 - Fountain codes: LT (Luby 2002), Raptor/RaptorQ (RFC 6330). Unequal protection by expanding windows is from
   Sejdinovic, Vukobratovic, Doufexi, Senk and Piechocki, "Expanding window fountain codes for unequal error
   protection" (IEEE Trans. Commun., 2009), which also evaluates it for progressive video. Using it under a
@@ -231,10 +302,11 @@ make lint      rustfmt, clippy -D warnings, shell syntax
 make demo      quick report on generated pictures (what CI runs)
 make report    full report (uses data/ if `make data` was run)
 make loopback  macOS only: through the BlackHole virtual audio device, silent; skips if unavailable
+make sstv-check  Robot 36 against pySSTV 0.5.9 and sstv 0.2.0, in a Python virtual environment under out/
 ```
 
-CI runs build, lint, tests and the quick report on Linux, and the tests on macOS. Test pictures are
-generated at test time; nothing binary is committed.
+CI runs build, lint, tests, the quick report and the SSTV cross-check on Linux, and the tests on macOS, on
+every pushed branch. Test pictures are generated at test time; nothing binary is committed.
 
 ## License
 

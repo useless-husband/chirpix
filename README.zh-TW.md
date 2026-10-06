@@ -13,6 +13,8 @@
 
 > **證據的範圍。** 下面所有數字都來自「模擬的」喇叭—房間—麥克風通道。訊號另外有透過 macOS 真正的音效系統、
 > 經由虛擬迴路裝置播放並錄回來（沒有經過空氣）。**還沒有**用真的喇叭和麥克風測過。
+> 類比 SSTV 對照組以及所有跟它有關的數字，是在一台四個 vCPU 的雲端 Linux 虛擬機上跑的；chirpix 的數字在那台機器上
+> 重跑，結果和在 Apple M5 上量的完全相同。
 
 [English](README.md) · [設計筆記（英文）](docs/DESIGN.md) · [給初學者的導讀](docs/導讀.zh-TW.md)
 
@@ -23,13 +25,18 @@
 四張柯達測試照片（768x512），一個普通的模擬房間（「fair」：頻帶內訊雜比 14 dB、殘響時間 RT60 0.45 秒、
 直達聲比回音大 5 dB、錄音端時鐘慢 70 ppm、偶爾有爆音），聆聽者在四個任意時刻開始錄。
 數字是 RGB 的平均 PSNR／亮度的 SSIM；括號內是 16 次測試中有幾次有圖。沒有圖的那次以「全灰畫面」計分（12.4 dB／0.41）。
+前四列用同一個數據機和影像編碼，只有封包排程不同；後三列是類比 SSTV（Robot 36），經過同一個通道、同樣的亂數種子和開始時間。
+36.9 秒是一張 SSTV 圖（含標頭）的長度。
 
-| 數據機、影像編碼、聲音長度都相同，只有封包排程不同 | 5 秒 | 15 秒 | 30 秒 | 75 秒 |
-|---|---|---|---|---|
-| **chirpix**（分層噴泉碼，資料流 9.1 kB） | 19.1 dB／0.48（16） | 20.5／0.51（16） | 22.3／0.57（16） | 26.4／0.74（16） |
-| 漸進式資料流照順序送、循環播放 | 12.4／0.41（0） | 14.6／0.44（4） | 15.7／0.48（4） | 31.1／0.87（16） |
-| 一般噴泉碼，收完才顯示 | （0） | （0） | （0） | 30.9／0.87（16） |
-| 普通 27 kB 檔案，75 秒送一遍 | （0） | （0） | （0） | **31.1／0.87**（16） |
+| 做法 | 5 秒 | 15 秒 | 30 秒 | 36.9 秒 | 75 秒 |
+|---|---|---|---|---|---|
+| **chirpix**（分層噴泉碼，資料流 9.1 kB） | 19.1 dB／0.48（16） | 20.5／0.51（16） | 22.3／0.57（16） | 22.8／0.60（16） | 26.4／0.74（16） |
+| 漸進式資料流照順序送、循環播放 | 12.4／0.41（0） | 14.6／0.44（4） | 15.7／0.48（4） | 18.2／0.53（8） | 31.1／0.87（16） |
+| 一般噴泉碼，收完才顯示 | （0） | （0） | （0） | （0） | 30.9／0.87（16） |
+| 普通 27 kB 檔案，75 秒送一遍 | （0） | （0） | （0） | （0） | **31.1／0.87**（16） |
+| SSTV Robot 36（320x240），聽到標頭之後才顯示 | （0） | 12.4／0.41（4） | 12.9／0.40（8） | 13.3／0.40（16） | 16.9／0.42（16） |
+| SSTV，標頭之前聽到的掃描線也保留 | （0） | 12.8／0.41（4） | 13.9／0.41（8） | 16.9／0.41（16） | 16.9／0.42（16） |
+| SSTV，聆聽者剛好在一張圖開始時就在聽 | 12.6／0.40（16） | 13.2／0.39（16） | 15.1／0.41（16） | 16.9／0.41（16） | 16.9／0.41（16） |
 
 兩個方向都要看。一分鐘以內，只有 chirpix 穩定地有圖。到了 75 秒、通道又完全不掉封包時，
 **普通檔案贏 4.7 dB**：它把所有時間都拿來送新資料，而 chirpix 有三分之二的時間花在「讓前面幾層早點到」
@@ -37,21 +44,37 @@
 
 在「poor」通道（訊雜比 10 dB、RT60 0.6 秒、回音和直達聲一樣大、爆音、錄音會掉音、18% 封包遺失），
 每個時間點的順序都反過來：chirpix 是 17.4／20.0／22.2／24.8 dB，16 次中分別有 13、16、16、16 次有圖；
-普通檔案 75 秒內一次都沒收完；照順序送的做法到 20.7 dB。
+普通檔案 75 秒內一次都沒收完；照順序送的做法到 20.7 dB；SSTV 在 75 秒是 14.2 dB（16 次都有圖）。
+
+**和類比 SSTV（業餘無線電傳圖的方式）比**，在三個模擬房間、每個時間點都是 chirpix 贏。聽完一整張 SSTV 圖時（36.9 秒），
+「fair」通道上 SSTV 是 16.9 dB、chirpix 是 22.8 dB；到 75 秒 SSTV 還是 16.9、chirpix 26.4。主因是房間回音：
+FM 鑑頻器對「強度有直達聲三分之一」的回音毫無抵抗力（OFDM 數據機那 43 毫秒的循環字首就是為了這個）。其次是解析度：
+320x240 讓四張照片平均最多只有 25.7 dB，完全不經過通道、送出再收回來也只有 22.2 dB。SSTV 贏的地方：
+
+- **它沒有門檻。** 只有白雜訊、沒有回音時，數據機在 4 到 2 dB 之間收不到封包，chirpix 什麼都顯示不出來；SSTV 在 2 dB
+  還有 15.7 dB、0 dB 還有 14.2 dB。（SSIM 認為這些滿是雜訊的圖比全灰畫面還差，PSNR 則認為比較好。）
+- **沒有起始延遲**，前提是聆聽者在一張圖開始時就在聽：大約一秒後第一條掃描線就出現。但 5 秒時只有最上面 27 條（12.6 dB），
+  chirpix 則已經有整張粗略的圖（19.1 dB）。如果像表中那樣從一張圖的中間開始聽，就要等下一個標頭，最多 38 秒；
+  除非接收端把標頭之前聽到的掃描線也留下來（第二列 SSTV）。
+- 它是漸漸變差：從「good」到「poor」，75 秒時從 19.7 dB 滑到 14.2 dB；普通檔案和一般噴泉碼則是從 35 dB 直接變成什麼都沒有。
+
+SSTV 編碼器和 pySSTV 逐個取樣點相符，解碼器也拿 pySSTV 產生的聲音驗證過；細節見 [DESIGN.md](docs/DESIGN.md#analogue-baseline-sstv-robot-36)。
 
 ![PSNR 對聆聽時間、對開始時間](docs/curves.png)
 
 下面那張圖是第二個特性：聽 30 秒之後，不管從哪一秒開始，chirpix 都是 24.8 到 27.6 dB；
 照順序送的做法只有在這 30 秒剛好包含循環的開頭時才有圖（那時候它比較好，最高 34 dB）。
 
-以上全部可以用 `make data && make report` 重現（Apple M5 四核心約 90 秒，量測時機器同時有其他工作在跑），
-會產生單一檔案的 `out/report/report.html`。
+以上全部可以用 `make data && make report` 重現，會產生單一檔案的 `out/report/report.html`：加入 SSTV 之前，
+Apple M5 四核心約 90 秒（量測時機器同時有其他工作在跑）；加入之後，在四個 vCPU 的雲端 Linux 虛擬機上是 5 分 8 秒
+（同一台機器不含 SSTV 是 3 分 52 秒）。
 
 ## 試試看
 
 ```
 make build          # 需要 Rust 1.82 以上（https://rustup.rs）
-make test           # 74 個測試，編譯完之後幾秒鐘
+make test           # 84 個測試，編譯完之後幾秒鐘
+make sstv-check     # SSTV 對照 pySSTV 和 sstv 套件（需要 python3 和連上 PyPI）
 make demo           # 用內建測試圖做小報告 -> out/demo/report.html
 make data report    # 下載四張柯達照片（2.8 MB，有 SHA-256 檢查）並做完整報告
 ```
@@ -85,6 +108,37 @@ quality      10.1 dB per carrier, recorder clock -72 ppm, packets ok 288/288
      75.0      253          9095  decoded/t0075.png  PSNR 33.57 dB  SSIM 0.9059  [complete]
 ```
 
+同一張圖改用類比 SSTV、經過同一個房間（真實輸出；WAV 開頭有 0.25 秒靜音）：
+
+```
+$ chirpix sstv-encode data/kodim23.png -o sstv.wav --repeat 3
+image        data/kodim23.png  768x512 -> 320x240
+mode         Robot 36 (VIS code 8), 150 ms per line, 36.91 s per picture with header, colour Spec
+audio        sstv.wav : 111.2 s, 3 picture(s), 48 kHz 16-bit mono
+
+$ chirpix simulate sstv.wav -o rx.wav --channel fair --skip 7.3 --rate 44100
+channel      SNR 14 dB, RT60 0.45 s, DRR 5 dB, clock -70 ppm, band 0.4-9.0 kHz, 0.5 clicks/s at +20 dB
+recording    rx.wav : 103.9 s at 44100 Hz (started 7.3 s into the transmission)
+
+$ chirpix sstv-decode rx.wav -o decoded-sstv --every 15 --ref data/kodim23.png
+recording    rx.wav: 103.9 s at 44100 Hz, 1 channel(s)
+header       at 29.86 s: VIS code 8
+header       at 66.77 s: VIS code 8
+lines        677 sync pulses, 679 lines placed (199 counted back from a header), clock -68 ppm
+noise        240 Hz rms on the sync pulses; pixels measured over 15.0 widths (Y), 59.9 (chroma)
+
+  seconds  rows  picture
+     15.0     0  nothing yet
+     30.0     0  nothing yet
+     45.0    94  decoded-sstv/t0045.png  PSNR 13.53 dB  SSIM 0.6519
+     60.0   194  decoded-sstv/t0060.png  PSNR 15.86 dB  SSIM 0.6256
+     75.0   240  decoded-sstv/t0075.png  PSNR 17.94 dB  SSIM 0.6286  [all rows]
+     90.0   240  decoded-sstv/t0090.png  PSNR 17.89 dB  SSIM 0.6293
+    103.9   240  decoded-sstv/t0104.png  PSNR 17.86 dB  SSIM 0.6282
+```
+
+加上 `--placement buffered`，第一個標頭之前聽到的 199 條掃描線會在標頭到達時放進圖裡：45 秒時 240 列都有了（17.90 dB）。
+
 ### 真的從空氣中傳（作者尚未驗證）
 
 兩台裝置：一台播放 `tx.wav`（任何播放器都可以），另一台用手機的錄音 App 錄 30 秒以上，什麼時候開始錄都可以；
@@ -113,6 +167,8 @@ quality      10.1 dB per carrier, recorder clock -72 ppm, packets ok 288/288
 - **噴泉碼。** 第 `n` 包是由 `n` 決定的幾個原始封包的 XOR。資料流開頭有六個由小到大的視窗，各分到固定比例的封包，
   所以開頭最先解出來。接收端用高斯消去法解方程式，使用「從頭開始連續已知」的最長一段。
 - **影像編碼。** YCbCr、9/7 小波、位元平面用四元樹加自適應二元區間編碼。資料流是嵌入式的：切在哪裡都能解。
+- **類比對照組**（`src/sstv.rs`）。Robot 36 SSTV：照公開的時序編碼；解碼端有 FM 鑑頻、VIS 標頭、
+  掃描同步（含時鐘誤差擬合）、用奇偶分隔音在掉音後把行數算對、依量到的雜訊決定平滑程度。
 
 封包格式、設計理由、走過的冤枉路寫在 [docs/DESIGN.md](docs/DESIGN.md)。
 
@@ -170,7 +226,10 @@ quality      10.1 dB per carrier, recorder clock -72 ppm, packets ok 288/288
 - 速度慢：QPSK 每秒 372 位元組。一張 768x512 的照片 75 秒只能送 9 kB，平均約 26 dB。
 - 第一張圖很粗（0.4 kB），而且要收滿兩段：通常 4–5 秒，有時更久。
 - 符號很長，所以怕移動，也怕超過 ±600 ppm 的時鐘誤差。
-- 錄音掉音會損失那一段剩下的部分。沒有做即時接收、超音波模式、類比 SSTV 對照組。
+- 錄音掉音會損失那一段剩下的部分。沒有做即時接收、超音波模式。
+- SSTV 對照組只有一種模式（Robot 36）和一個接收端（我自己寫的）。它的時序和兩個獨立實作相符，但解碼器只在乾淨的聲音上
+  和別人的解碼器比過，平滑程度也是為了 PSNR 調的（用內建測試圖）。比較時兩者平均功率相同；SSTV 是定振幅訊號，
+  在同樣的峰值限制下其實可以大聲約 7.6 dB。人眼看一張有雜訊的 SSTV 圖，可能比「和原尺寸原圖算 PSNR、SSIM」寬容。
 - 多聲道錄音只讀第一個聲道；只吃 WAV 檔。
 - 邊長超過 1024 像素的圖片會先縮小再編碼。
 
@@ -181,7 +240,8 @@ quality      10.1 dB per carrier, recorder clock -72 ppm, packets ok 288/288
   搭配 Reed-Solomon 碼；[minimodem](https://github.com/kamalmostafa/minimodem) 實作了經典的 FSK 標準。
   它們可靠地傳位元組或檔案。chirpix 比它們都慢、也沒有它們經過的實戰驗證；多出來的是數據機上面那兩層的搭配。
 - [Fldigi](http://www.w1hkj.com/) 和類比 SSTV 是業餘無線電用音訊通道傳圖的方式。SSTV 遇到雜訊會漸漸變差而不是整張失敗，
-  但每張圖的時間固定，也沒有「中途加入」的概念。
+  但每張圖的時間固定，也沒有「中途加入」的概念。這裡把 Robot 36 當成對照組量過；用
+  [pySSTV](https://github.com/dnet/pySSTV) 和 [sstv](https://pypi.org/project/sstv/) 套件驗證。
 - 噴泉碼：LT 碼（Luby 2002）、Raptor／RaptorQ（RFC 6330）。用擴展視窗做不等保護出自 Sejdinovic、Vukobratovic、
   Doufexi、Senk、Piechocki 的論文〈Expanding window fountain codes for unequal error protection〉
   （IEEE Trans. Commun., 2009），論文裡也拿它搭配漸進式視訊。把它放在漸進式影像編碼下面是他們的想法，不是我的。
@@ -199,9 +259,10 @@ make lint      rustfmt、clippy -D warnings、shell 語法檢查
 make demo      用產生的測試圖做快速報告（CI 跑的就是這個）
 make report    完整報告（有先執行 make data 就用 data/ 裡的照片）
 make loopback  僅 macOS：經過 BlackHole 虛擬音效裝置，不發出聲音；沒有裝置或權限就略過
+make sstv-check  Robot 36 對照 pySSTV 0.5.9 和 sstv 0.2.0，裝在 out/ 底下的 Python 虛擬環境裡
 ```
 
-CI 在 Linux 上跑建置、lint、測試和快速報告，在 macOS 上跑測試。測試圖片在測試時產生，沒有提交任何二進位檔。
+CI 在每個推上去的分支都會跑：Linux 上跑建置、lint、測試、快速報告和 SSTV 對照檢查，macOS 上跑測試。測試圖片在測試時產生，沒有提交任何二進位檔。
 
 ## 授權
 

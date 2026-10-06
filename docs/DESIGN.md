@@ -25,6 +25,7 @@ Three layers, each with one property the next relies on:
 | Modem | `modem.rs`, `conv.rs` | Every frame stands alone; a packet either arrives intact or not at all |
 
 `link.rs` joins them, `channel.rs` is the simulated room, `experiments.rs` and `report.rs` measure.
+`sstv.rs`, outside this pipeline, is the analogue baseline they are compared with.
 
 ## Modem
 
@@ -266,6 +267,142 @@ per carrier.
 Not modelled: loudspeaker non-linearity, automatic gain control and noise suppression in phone recorders,
 lossy audio compression, movement, coloured noise. Any of these can dominate in practice.
 
+## Analogue baseline: SSTV Robot 36
+
+The obvious question about a digital picture link over sound is whether it beats the analogue way radio
+amateurs have done it for decades. `sstv.rs` is that baseline: a Robot 36 encoder and decoder, run through the
+same simulated channels, with the same seeds and start times, by the same report. The numbers in this section
+were measured on a cloud Linux VM with four vCPUs (`make report`, `make sstv-check`).
+
+### Why Robot 36
+
+Robot 36 and Martin M1 are both among the most used modes and both are supported by every mainstream SSTV
+program and by the two independent implementations used below. Robot 36 takes 36.91 s per picture with its
+header; Martin M1 takes 256 lines of 446.446 ms (pySSTV's constants), 114.3 s, longer than the whole 75 s this
+project is measured over, so at 75 s a Martin M1 listener has never seen a complete picture. Robot 36 fits
+twice into the window and gives a natural comparison point, 36.9 s, that is added to every table. Its colour
+(luma plus alternating R-Y and B-Y at half the vertical rate) is also the closest to how the chirpix codec
+handles colour. The price is resolution: 320x240 with chroma shared by line pairs.
+
+### Signal, and where it comes from
+
+Timing and header are those of J. L. Barber, "Proposal for SSTV Mode Specifications" (Dayton SSTV forum,
+2000), which documents the Robot 1200C modes. The hosts that serve that paper were not reachable from the VM
+(its network policy blocked them), so every number was checked against two implementations whose sources
+were: pySSTV 0.5.9 (`pysstv/color.py`, `pysstv/sstv.py`) and SSTVEncoder2 (`Modes/Robot36.java`,
+`Modes/Mode.java`, `ImageFormats/YuvConverter.java`, which has the studio-swing colour equations used here).
+They agree on the timing below.
+
+```
+header (910 ms): 1900 Hz 300 ms | 1200 Hz 10 ms | 1900 Hz 300 ms | start bit 1200 Hz 30 ms |
+                 7 bits LSB first + even parity, 1100 Hz = 1, 1300 Hz = 0, 30 ms each | stop bit 1200 Hz 30 ms
+                 Robot 36 is code 8
+line (150 ms):   sync 1200 Hz 9 ms | porch 1500 Hz 3 ms | Y, 320 px, 88 ms |
+                 separator 4.5 ms: 1500 Hz on even lines, 2300 Hz on odd | porch 1900 Hz 1.5 ms |
+                 chroma, 320 px, 44 ms: R-Y on even lines, B-Y on odd
+value v (0-255) is sent as 1500 + 800 v / 255 Hz; 240 lines; header + picture = 36.91 s
+```
+
+The two encoders disagree about colour. Barber's equations are BT.601 with studio swing (Y 16-235, chroma
+16-240); pySSTV uses Pillow's full-range YCbCr (Y 0-255), truncated to integers, and sends each line's own
+chroma where SSTVEncoder2 averages each pair of lines. A receiver has to assume one; the wrong one costs
+contrast and colour. `sstv.rs` follows Barber by default (`--convention spec`) and can do what pySSTV does
+(`--convention pysstv`). The independent decoder used below assumes full range.
+
+### Checked against independent implementations
+
+`make sstv-check` installs pySSTV 0.5.9, the `sstv` 0.2.0 package (Python bindings to a Rust SSTV codec) and
+Pillow 12.3.0 into a virtual environment under `out/`, makes fixtures with them and runs
+`tests/sstv_crosscheck.rs`. CI runs it on Linux. On two built-in test pictures at 320x240:
+
+- **Encoder against pySSTV, sample by sample.** Given Pillow's own YCbCr values, our encoder's 1 771 680
+  samples differ from pySSTV's by at most one 16-bit step (pySSTV truncates; 1.002 steps in the f32
+  comparison). Same length, same segment boundaries, same phase. Our float version of Pillow's colour
+  conversion is within one level of it (one level off in 3 765 and 4 564 of 76 800 pixels).
+- **Our decoder on pySSTV audio** (scene / clouds): 30.8 / 35.2 dB with light smoothing (1 and 4 pixel
+  widths), 25.7 / 38.3 dB with the smoothing the receiver picks itself, against 28.0 / 32.6 dB for the `sstv`
+  package on the same audio. Assuming studio swing instead costs 3.6 / 7.4 dB.
+- **The `sstv` package on our audio:** 28.3 / 32.2 dB for `--convention pysstv` (pySSTV's own audio: 28.0 /
+  32.6). For our default studio-swing audio it shows 26.1 / 26.8 dB; reading its Y, B-Y, R-Y back out and
+  through the studio-swing equations gives 28.1 / 31.7 dB.
+- **Either encoder through the simulated room**, decoded by us: within 0.15 dB of each other on "good" and
+  "fair".
+
+The decoders were compared only on clean audio: neither independent implementation has a channel model.
+
+### Receiver
+
+FM discriminator on a complex baseband (1900 Hz centre, ±1600 Hz band): a pixel's frequency is the angle of
+the sum of `z[k] conj(z[k-1])` over its time, which weights each sample by its power. Then:
+
+1. **Header.** Tone powers at 1100, 1200, 1300 and 1900 Hz in 1 ms bins. A header needs both 300 ms leaders
+   (24 of 29 10-ms windows mostly 1900 Hz) and some 1200 Hz in the start and stop bits; the VIS bits are
+   decoded but a bad code is not fatal (the receiver is set to Robot 36).
+2. **Line sync.** The share of power that is a steady 1200 Hz tone, over 9 ms windows at every sample; peaks
+   with a neighbour one or two lines away are kept, chained into runs on one straight time line, and each run
+   fitted (the slope is the clock offset: −68 ppm measured for −70, +133 for +130).
+3. **Rows.** Counted from a header heard before the line (`--placement vis`, what SSTV programs do) or, for
+   lines heard before any header, back from the next one (`--placement buffered`). Between runs, a line takes
+   its time from the nearest run; a receiver that loses sync free-runs.
+4. **Pixels**, averaged over a window that grows with the noise (below).
+
+### Hard problems
+
+**Echo.** Through the "fair" room the picture is barely recognisable, and smoothing only partly helps
+(one picture of kodim23: 13.1 dB measuring each pixel on its own, 17.9 dB smoothed; with no channel 28.7 /
+26.1 dB). An FM discriminator follows the sum of the direct sound and its echo; with the echo a third as
+strong (DRR 5 dB) and at other pixel frequencies, every pixel is pulled towards its neighbours' recent past,
+and the beat between them throws the frequency about. Nothing in SSTV can tell the two apart: there is no
+training signal and no guard time. The "fair" room (14 dB of noise plus the echo) leaves SSTV where 4 dB of
+noise alone would: 16.9 dB at 75 s, against 17.0 dB with white noise at 4 dB and no echo. This is the main
+reason SSTV loses here, and it is a property of the simulated rooms, which are the same for both.
+
+**Noise and smoothing.** The frequency error of a discriminator measured over a time T falls as T^-1.5, so
+averaging over neighbouring pixels helps a lot, at the cost of sharpness. The receiver measures the rms
+frequency error over one Y pixel inside the sync pulses (a known 1200 Hz tone): 0 Hz with no channel, about
+116, 242 and 444 Hz on "good", "fair" and "poor". It then averages each Y pixel over `clamp(noise / 16 Hz,
+4, 16)` pixel widths and each chroma pixel over four times as many. The rule was fitted to the built-in test
+pictures for the best PSNR against the full-size original, and errs towards blur on clean audio (kodim23 with
+no channel: 26.1 dB, against 28.7 dB unsmoothed). Smoothing this heavily (16 pixels is 4.4 ms) is generous
+to SSTV under PSNR; a person might prefer the sharper, noisier picture.
+
+**Counting lines across dropouts.** A dropout deletes 50 ms, a third of a line. The run of sync pulses after
+it starts on a new time line, and the receiver counts the lines across the gap by its length. Two dropouts
+in one gap (100 ms) make the count one short, and every later row lands one row off. The even/odd separator
+tones exist for this: two runs that disagree about which lines are odd are one line apart from where the
+count put them. With that correction, a dropout costs the line it hits and the line that shares its chroma
+(unit test: no more than two line pairs per dropout, at 30 dropouts a minute).
+
+**Finding the header in a room.** At DRR 0 dB a room's response has deep notches. One simulated "poor" room
+put 1200 Hz 15 dB below 1900 Hz, so the start bit drowned in the echo of the 1900 Hz leader and no header was
+ever found: no picture in 2 of 32 runs. Echo also made the header pattern fit at a second offset 45 ms later.
+Now both leaders are required, the start and stop bits need only 15% of the power, and candidates within half
+a second are one header. Over 48 recordings (four photographs, ideal to poor channels, three seeds each) all
+192 headers are found and no false one.
+
+### Results
+
+The table in the README and the report's "Analogue baseline" section. In short: chirpix is better in all three
+rooms at every time, by 5.9 dB at 36.9 s and 9.5 dB at 75 s on "fair". SSTV has no threshold: in white noise
+below the modem's (between 4 and 2 dB) it still gives a picture, 15.7 dB at 2 dB and 14.2 dB at 0 dB, where
+chirpix gives nothing. It has no start-up delay for a listener who is there when a picture starts, but a
+partial picture from the top is worth little under PSNR (12.6 dB after 5 s, against 19.1 dB for chirpix's
+whole coarse picture), and a listener who joins mid-picture waits for the next header unless the receiver
+buffers.
+
+Equal average power is the comparison here. SSTV's constant envelope (peak 1.4 x RMS against 3.4 x for the
+OFDM signal) would let it be played about 7.6 dB louder for the same peak level, which matters if the
+loudspeaker, not the room noise, is the limit. That case was not measured.
+
+### Left out
+
+- Other modes (Martin, Scottie, PD). PD modes send luma twice per chroma pair and are used for higher
+  resolution; at these SNRs resolution is not what limits SSTV.
+- Averaging repeated pictures of a beacon (3 dB per doubling, in principle). SSTV programs do not do it.
+- Starting without a header, from the line sync alone (some programs can). Without a header the receiver
+  does not know which row it is on.
+- A noise blanker for the clicks: tried, +0.05 dB, removed.
+
 ## Considered and left out
 
 - **LDPC instead of the convolutional code.** Roughly 2 dB better at these block sizes. The convolutional
@@ -279,5 +416,4 @@ lossy audio compression, movement, coloured noise. Any of these can dominate in 
 - **Re-synchronising inside a frame after a dropout.** A deleted stretch of audio shifts everything after
   it; the rest of that frame is lost (the dropout sweep shows it: at 30 dropouts a minute only a third of
   packets arrive).
-- **Analogue SSTV baseline.** Not built. The comparison baselines are digital and share the modem.
 - **A streaming receiver**, an ultrasonic band, adaptive bit loading per carrier: future work.
