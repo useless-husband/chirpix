@@ -1,8 +1,8 @@
 name: CI
 
 on:
+  # Every pushed branch, so work in progress is checked before a pull request.
   push:
-    branches: [main]
   pull_request:
 
 permissions:
@@ -24,6 +24,7 @@ jobs:
         run: |
           sh -n scripts/fetch_data.sh
           sh -n scripts/loopback.sh
+          sh -n scripts/sstv_crosscheck.sh
           bash -n "跑跑看.command"
       - name: build
         run: cargo build --release
@@ -33,6 +34,13 @@ jobs:
         run: cargo test --release
       - name: demo (quick report on generated pictures)
         run: make demo
+      # The SSTV baseline against pySSTV and the sstv package, installed into a
+      # virtual environment under out/ (chirpix itself does not use them).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: SSTV cross-check
+        run: make sstv-check
       - uses: actions/upload-artifact@v4
         with:
           name: demo-report

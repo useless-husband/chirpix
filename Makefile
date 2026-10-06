@@ -5,7 +5,7 @@ JOBS ?= 4
 BIN := ./target/release/chirpix
 KODAK := data/kodim23.png data/kodim19.png data/kodim05.png data/kodim08.png
 
-.PHONY: build test lint demo report data loopback clean
+.PHONY: build test lint demo report data loopback sstv-check clean
 
 build:
 	$(CARGO) build --release -j $(JOBS)
@@ -19,6 +19,7 @@ lint:
 	$(CARGO) clippy --release -j $(JOBS) --all-targets -- -D warnings
 	sh -n scripts/fetch_data.sh
 	sh -n scripts/loopback.sh
+	sh -n scripts/sstv_crosscheck.sh
 	bash -n "跑跑看.command"
 
 # Small version of the report on built-in test pictures (what CI runs, under a minute).
@@ -34,6 +35,11 @@ data:
 report: build
 	@if [ -f data/kodim23.png ]; then $(BIN) report -o out/report --threads $(JOBS) $(KODAK); \
 	else $(BIN) report -o out/report --threads $(JOBS); fi
+
+# The SSTV encoder and decoder against pySSTV and the sstv package, installed
+# into a virtual environment under out/ (needs python3 and access to PyPI).
+sstv-check:
+	sh scripts/sstv_crosscheck.sh
 
 # Real audio stack, no sound: play into and record from the BlackHole virtual device.
 loopback: build
