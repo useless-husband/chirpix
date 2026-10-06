@@ -70,7 +70,7 @@ pub enum Convention {
     /// swing: Y 16-235, chroma 16-240 around 128), chroma averaged over
     /// each pair of lines. SSTVEncoder2 does the same. The default.
     Spec,
-    /// What pySSTV 0.5.9 sends: Pillow's full-range YCbCr (JPEG), rounded
+    /// What pySSTV 0.5.9 sends: Pillow's full-range YCbCr (JPEG), truncated
     /// to integers, each line sending its own chroma.
     Pysstv,
 }
@@ -111,7 +111,8 @@ impl Convention {
         let v = [0, 1, 2].map(|i| off[i] + m[i][0] * rgb[0] + m[i][1] * rgb[1] + m[i][2] * rgb[2]);
         match self {
             Convention::Spec => v,
-            Convention::Pysstv => v.map(|x| x.round().clamp(0.0, 255.0)),
+            // Pillow's fixed-point arithmetic truncates.
+            Convention::Pysstv => v.map(|x| (x + 1.0 / 128.0).floor().clamp(0.0, 255.0)),
         }
     }
 
@@ -164,6 +165,14 @@ pub fn frame_tones(pic: &Image, conv: Convention) -> Vec<(f64, f64)> {
         .chunks_exact(3)
         .map(|p| conv.to_ycc([p[0] as f64, p[1] as f64, p[2] as f64]))
         .collect();
+    frame_tones_ycc(&ycc, conv == Convention::Spec)
+}
+
+/// Header and picture from `[Y, B-Y, R-Y]` per pixel, row by row. With
+/// `pair_chroma` each line sends the mean chroma of its pair of lines,
+/// otherwise its own.
+pub fn frame_tones_ycc(ycc: &[[f64; 3]], pair_chroma: bool) -> Vec<(f64, f64)> {
+    assert_eq!(ycc.len(), WIDTH * HEIGHT);
     let mut t = header_tones(VIS_CODE);
     for line in 0..HEIGHT {
         let odd = line % 2 == 1;
@@ -176,12 +185,11 @@ pub fn frame_tones(pic: &Image, conv: Convention) -> Vec<(f64, f64)> {
         t.push((F_LEADER, PORCH_MS));
         let ch = if odd { 1 } else { 2 };
         for x in 0..WIDTH {
-            let v = match conv {
-                Convention::Spec => {
-                    let pair = line & !1;
-                    0.5 * (ycc[pair * WIDTH + x][ch] + ycc[(pair + 1) * WIDTH + x][ch])
-                }
-                Convention::Pysstv => ycc[line * WIDTH + x][ch],
+            let v = if pair_chroma {
+                let pair = line & !1;
+                0.5 * (ycc[pair * WIDTH + x][ch] + ycc[(pair + 1) * WIDTH + x][ch])
+            } else {
+                ycc[line * WIDTH + x][ch]
             };
             t.push((freq_of(v), C_MS / WIDTH as f64));
         }
@@ -189,22 +197,23 @@ pub fn frame_tones(pic: &Image, conv: Convention) -> Vec<(f64, f64)> {
     t
 }
 
-/// Phase-continuous synthesis. Segment boundaries fall on the first sample
-/// at or after each segment's nominal start, accumulated without rounding.
+/// Phase-continuous synthesis. Each segment gets the whole samples of its
+/// duration and passes the fraction on to the next, as pySSTV does, so the
+/// two can be compared sample by sample.
 pub fn synthesize(tones: &[(f64, f64)], rate: u32, amp: f32) -> Vec<f32> {
     let spms = rate as f64 / 1000.0;
     let total: f64 = tones.iter().map(|t| t.1).sum();
     let mut out = Vec::with_capacity((total * spms) as usize + 1);
-    let (mut t_ms, mut phase) = (0.0f64, 0.0f64);
+    let (mut carry, mut phase) = (0.0f64, 0.0f64);
     for &(f, ms) in tones {
-        t_ms += ms;
-        let end = (t_ms * spms + 1e-6).floor() as usize;
+        carry += spms * ms;
+        let n = carry.floor();
+        carry -= n;
         let w = TAU * f / rate as f64;
-        while out.len() < end {
-            out.push(amp * phase.sin() as f32);
-            phase += w;
+        for i in 0..n as usize {
+            out.push(amp * (i as f64 * w + phase).sin() as f32);
         }
-        phase %= TAU;
+        phase = (phase + n * w) % TAU;
     }
     out
 }
@@ -768,8 +777,10 @@ pub fn receive_with(samples: &[f32], rate: u32, smoothing: Option<(f64, f64)>) -
 
 impl Reception {
     fn usable(&self, at: f64, placement: Placement) -> impl Iterator<Item = &Line> {
+        // A line counts once it has ended, give or take the 2 ms by which its
+        // measured start can be off.
         self.lines.iter().filter(move |l| {
-            l.time + LINE_MS / 1000.0 <= at + 1e-9 && l.known_at <= at + 1e-9 && (l.forward || placement == Placement::Buffered)
+            l.time + LINE_MS / 1000.0 <= at + 0.002 && l.known_at <= at + 1e-9 && (l.forward || placement == Placement::Buffered)
         })
     }
 
@@ -934,13 +945,14 @@ mod tests {
         // Pillow's full-range YCbCr, as pySSTV sends it.
         let p = Convention::Pysstv;
         assert!(close(p.to_ycc([255.0; 3]), [255.0, 128.0, 128.0], 0.0));
-        assert!(close(p.to_ycc([255.0, 0.0, 0.0]), [76.0, 85.0, 255.0], 0.0));
+        assert!(close(p.to_ycc([255.0, 0.0, 0.0]), [76.0, 84.0, 255.0], 0.0));
         // Round trips.
         let mut rng = Rng::new(7);
         for _ in 0..1000 {
             let rgb = [0, 1, 2].map(|_| rng.below(256) as f64);
             assert!(close(s.to_rgb(s.to_ycc(rgb)), rgb, 1e-6));
-            assert!(close(p.to_rgb(p.to_ycc(rgb)), rgb, 1.5));
+            // Truncating each of Y, Cb, Cr costs up to one level: about 2.8 in R, G or B.
+            assert!(close(p.to_rgb(p.to_ycc(rgb)), rgb, 2.8));
         }
     }
 
