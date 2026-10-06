@@ -4,7 +4,7 @@ use chirpix::image::{psnr, ssim, synthetic, Image};
 use chirpix::link::{frames_for, receive_recording, Transmission, TxConfig};
 use chirpix::modem::{modem, Constellation, RxOptions, FS};
 use chirpix::report::{generate, recommend, ReportConfig, QAM16_MIN_SNR_DB};
-use chirpix::{png, wav};
+use chirpix::{png, sstv, wav};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -30,6 +30,17 @@ USAGE
 
   chirpix report [-o out/report] [--quick] [--threads 4] [image.png ...]
       Run the measurements and write report.html (self-contained).
+
+  chirpix sstv-encode <image.png> [-o sstv.wav] [--repeat 1]
+                 [--convention spec|pysstv]
+      Analogue SSTV baseline: the picture in Robot 36 (320x240, 36.91 s per
+      picture with its VIS header), repeated --repeat times, 48 kHz.
+
+  chirpix sstv-decode <recording.wav> [-o out_dir] [--every 5] [--ref image.png]
+                 [--placement vis|buffered] [--convention spec|pysstv]
+      Decode Robot 36. vis: start at a VIS header, as SSTV programs do;
+      buffered: also place lines heard before the first header. Writes the
+      picture every --every seconds, final.png and timeline.csv.
 
   chirpix testimage <scene|chart|clouds> [-o image.png] [--size 384x256]
       Write one of the built-in procedural test pictures.
@@ -269,6 +280,139 @@ fn cmd_decode(raw: &[String]) -> Result<(), String> {
     }
 }
 
+fn sstv_convention(a: &Args) -> Result<sstv::Convention, String> {
+    let c = a.opt.get("convention").map(|s| s.as_str()).unwrap_or("spec");
+    sstv::Convention::parse(c).ok_or_else(|| format!("--convention: '{c}' is not spec or pysstv"))
+}
+
+fn cmd_sstv_encode(raw: &[String]) -> Result<(), String> {
+    let a = parse_args(raw, &[])?;
+    a.known(&["out", "repeat", "convention"])?;
+    let input = a.pos.first().ok_or("sstv-encode: which image?")?;
+    let img = load_image(input)?;
+    let conv = sstv_convention(&a)?;
+    let repeat = a.num("repeat")?.unwrap_or(1.0);
+    if !(1.0..=100.0).contains(&repeat) || repeat.fract() != 0.0 {
+        return Err("--repeat must be a whole number 1..100".into());
+    }
+    let pic = sstv::fit(&img);
+    let mut audio = vec![0f32; FS as usize / 4];
+    audio.extend(sstv::beacon_audio(&pic, conv, 0.0, repeat * sstv::FRAME_SECONDS));
+    audio.extend(vec![0f32; FS as usize / 4]);
+    let out = PathBuf::from(a.opt.get("out").cloned().unwrap_or_else(|| "sstv.wav".into()));
+    wav::write(&out, &audio, FS).map_err(|e| format!("{}: {e}", out.display()))?;
+    println!("image        {input}  {}x{} -> {}x{}", img.w, img.h, pic.w, pic.h);
+    println!(
+        "mode         Robot 36 (VIS code {}), {:.0} ms per line, {:.2} s per picture with header, colour {conv:?}",
+        sstv::VIS_CODE,
+        sstv::LINE_MS,
+        sstv::FRAME_SECONDS
+    );
+    println!(
+        "audio        {} : {:.1} s, {repeat:.0} picture(s), 48 kHz 16-bit mono",
+        out.display(),
+        audio.len() as f64 / FS as f64
+    );
+    Ok(())
+}
+
+fn cmd_sstv_decode(raw: &[String]) -> Result<(), String> {
+    let a = parse_args(raw, &[])?;
+    a.known(&["out", "every", "ref", "placement", "convention"])?;
+    let input = a.pos.first().ok_or("sstv-decode: which recording?")?;
+    let w = wav::read(Path::new(input)).map_err(|e| format!("{input}: {e}"))?;
+    if !(8000..=192_000).contains(&w.rate) {
+        return Err(format!("{input}: sample rate {} Hz is outside 8000..192000", w.rate));
+    }
+    let conv = sstv_convention(&a)?;
+    let placement = match a.opt.get("placement").map(|s| s.as_str()).unwrap_or("vis") {
+        "vis" => sstv::Placement::FromVis,
+        "buffered" => sstv::Placement::Buffered,
+        other => return Err(format!("--placement: '{other}' is not vis or buffered")),
+    };
+    let every = a.num("every")?.unwrap_or(5.0);
+    if every < 0.5 {
+        return Err("--every must be at least 0.5".into());
+    }
+    let reference = match a.opt.get("ref") {
+        Some(p) => Some(load_image(p)?),
+        None => None,
+    };
+    let out = PathBuf::from(a.opt.get("out").cloned().unwrap_or_else(|| "decoded".into()));
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let duration = w.samples.len() as f64 / w.rate as f64;
+    println!("recording    {input}: {duration:.1} s at {} Hz, {} channel(s)", w.rate, w.channels);
+    let rx = sstv::receive(&w.samples, w.rate);
+    for h in &rx.headers {
+        println!(
+            "header       at {:.2} s: VIS code {}{}",
+            h.line0 - sstv::VIS_MS / 1000.0,
+            h.code,
+            if h.parity_ok { "" } else { " (parity error)" }
+        );
+    }
+    if rx.headers.is_empty() {
+        println!("header       none found");
+    }
+    println!(
+        "lines        {} sync pulses, {} lines placed ({} counted back from a header), clock {:+.0} ppm",
+        rx.pulses,
+        rx.lines.len(),
+        rx.lines.iter().filter(|l| !l.forward).count(),
+        rx.ppm
+    );
+    println!(
+        "noise        {:.0} Hz rms on the sync pulses; pixels measured over {:.1} widths (Y), {:.1} (chroma)",
+        rx.sync_noise_hz, rx.smoothing.0, rx.smoothing.1
+    );
+    let mut times: Vec<f64> = (1..).map(|i| i as f64 * every).take_while(|t| *t < duration).collect();
+    times.push(duration);
+    let mut csv = String::from("seconds,rows,psnr_db,ssim\n");
+    println!("\n  seconds  rows  picture");
+    let mut last_rows = None;
+    let mut last_pic = None;
+    for &t in &times {
+        let pic = rx.picture(t, placement, conv);
+        let rows = rx.rows_shown(t, placement);
+        let mut line = format!("  {t:7.1}  {rows:4}  ");
+        let mut q = (String::new(), String::new());
+        match &pic {
+            Some(img) => {
+                if last_pic.as_ref() != Some(img) {
+                    let name = out.join(format!("t{t:04.0}.png"));
+                    png::write(&name, img).map_err(|e| format!("{}: {e}", name.display()))?;
+                    line += &format!("{}", name.display());
+                } else {
+                    line += "(unchanged)";
+                }
+                if let Some(r) = &reference {
+                    let shown = img.resize(r.w, r.h);
+                    q = (format!("{:.2}", psnr(r, &shown)), format!("{:.4}", ssim(r, &shown)));
+                    line += &format!("  PSNR {} dB  SSIM {}", q.0, q.1);
+                }
+            }
+            None => line += "nothing yet",
+        }
+        if last_rows != Some(rows) && rows == sstv::HEIGHT {
+            line += "  [all rows]";
+        }
+        last_rows = Some(rows);
+        println!("{line}");
+        csv += &format!("{t:.2},{rows},{},{}\n", q.0, q.1);
+        last_pic = pic;
+    }
+    std::fs::write(out.join("timeline.csv"), csv).map_err(|e| e.to_string())?;
+    match last_pic {
+        Some(img) => {
+            let name = out.join("final.png");
+            png::write(&name, &img).map_err(|e| e.to_string())?;
+            println!("\nfinal picture {}  ({}x{})", name.display(), img.w, img.h);
+            Ok(())
+        }
+        None => Err("no line could be placed (no VIS header heard; --placement buffered keeps lines heard before one)".into()),
+    }
+}
+
 fn cmd_simulate(raw: &[String]) -> Result<(), String> {
     let a = parse_args(raw, &[])?;
     a.known(&[
@@ -455,6 +599,8 @@ fn main() {
         Some("decode") => cmd_decode(rest),
         Some("simulate") => cmd_simulate(rest),
         Some("report") => cmd_report(rest),
+        Some("sstv-encode") => cmd_sstv_encode(rest),
+        Some("sstv-decode") => cmd_sstv_decode(rest),
         Some("testimage") => cmd_testimage(rest),
         Some("info") => {
             cmd_info();
