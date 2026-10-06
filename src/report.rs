@@ -450,11 +450,13 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                             }
                         )
                     }
-                    None => h += &format!(
+                    None => {
+                        h += &format!(
                         "<div class=\"shot\"><div class=\"none\" style=\"height:{:.0}px\">nothing yet</div><b>{} s</b> · no picture</div>",
                         200.0 * ar,
                         secs(*t)
-                    ),
+                    )
+                    }
                 }
             }
             if li == 0 {
@@ -576,14 +578,33 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         "<h2>Analogue baseline: SSTV Robot 36</h2><p>Robot 36 is one of the most used slow-scan television modes: 320x240, luma and alternating R-Y / B-Y lines, 150 ms per line, {:.2} s per picture with its VIS header (timing from J. L. Barber, “Proposal for SSTV Mode Specifications”, Dayton 2000; checked sample by sample against pySSTV, see <code>make sstv-check</code>). Here a beacon sends the same picture over and over through the same simulated channels, with the same seeds and start times as the digital schemes. The audio has the same average power as the OFDM signal. A constant-envelope signal could be played about 7.6 dB louder before reaching the same peak level; this comparison does not give it that. The picture is shrunk to 320x240 to send and enlarged back for scoring, which alone limits the quality to the first table.</p><p>The receiver is an FM discriminator with VIS detection, line sync tracked with a clock-offset fit, and the even/odd separator tones to keep the line count right across dropouts. It measures the frequency noise on the sync pulses and averages each pixel over 4 to 16 pixel widths (chroma four times as many); that rule was tuned for PSNR on the built-in test pictures, not on these images. “Shown from a header” is what SSTV programs do: nothing is shown until a VIS header has been heard, then lines appear one by one. “Buffered” also keeps the lines heard before that header and places them, counting back, when it arrives. The picture is never complete before a whole picture has been heard (36.9 s), and a row that has not arrived is mid-grey.</p>",
         sstv::FRAME_SECONDS
     );
-    h += "<div class=\"tw\"><table><tr><th>Image</th><th>Shrunk to 320x240 and back, no channel</th></tr>";
-    for (name, img) in &images {
-        let back = sstv::fit(img).resize(img.w, img.h);
-        let (p, q) = (psnr(img, &back), ssim(img, &back));
-        h += &format!("<tr><td>{}</td><td>{p:.1} dB · {q:.3}</td></tr>", esc(name));
-        summary += &format!("SSTV resolution limit {name}: {p:.1} dB {q:.3}\n");
+    h += "<div class=\"tw\"><table><tr><th>Image</th><th>Shrunk to 320x240 and back</th><th>Sent and received, no noise or echo</th></tr>";
+    let limits = parallel_map(images.clone(), th, |(name, img)| {
+        let pic = sstv::fit(&img);
+        let back = pic.resize(img.w, img.h);
+        let audio = sstv::beacon_audio(&pic, sstv::Convention::Spec, sstv::FRAME_SECONDS - 1.0, sstv::FRAME_SECONDS + 1.2);
+        let rx = sstv::receive(&audio, FS);
+        let got = rx
+            .picture(rx.duration, sstv::Placement::FromVis, sstv::Convention::Spec)
+            .unwrap()
+            .resize(img.w, img.h);
+        (name, psnr(&img, &back), ssim(&img, &back), psnr(&img, &got), ssim(&img, &got))
+    });
+    for (name, p, q, p2, q2) in &limits {
+        h += &format!(
+            "<tr><td>{}</td><td>{p:.1} dB · {q:.3}</td><td>{p2:.1} dB · {q2:.3}</td></tr>",
+            esc(name)
+        );
+        summary += &format!("SSTV {name}: resolution limit {p:.1} dB {q:.3}, clean channel {p2:.1} dB {q2:.3}\n");
     }
-    h += "</table></div>";
+    let lm = |k: usize| mean(&limits.iter().map(|l| [l.1, l.2, l.3, l.4][k]).collect::<Vec<_>>());
+    h += &format!(
+        "<tr><td>mean</td><td>{:.1} dB · {:.3}</td><td>{:.1} dB · {:.3}</td></tr></table></div>",
+        lm(0),
+        lm(1),
+        lm(2),
+        lm(3)
+    );
     let mut sstv_channels = vec![Channel::clean()];
     sstv_channels.extend(channels.iter().cloned());
     let sstv_rows = parallel_map(sstv_channels, th, |ch| {
@@ -594,7 +615,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             &pic,
             sstv::Convention::Spec,
             sstv::FRAME_SECONDS - 1.0,
-            sstv::FRAME_SECONDS + 2.0,
+            sstv::FRAME_SECONDS + 1.2,
         ));
         let score = |rx: &sstv::Reception| {
             rx.picture(rx.duration, sstv::Placement::FromVis, sstv::Convention::Spec).map(|p| {
@@ -635,6 +656,63 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             f(q),
             f(raw)
         );
+    }
+    h += "</table></div>";
+
+    // Noise only: below the modem's threshold the digital link gives nothing
+    // and SSTV still gives a (noisy) picture.
+    let snrs: Vec<f64> = if q { vec![6.0, 2.0] } else { vec![8.0, 6.0, 4.0, 2.0, 0.0] };
+    let noise_lines = [
+        (Variant::Windowed, starts[0], "chirpix"),
+        (Variant::SstvVis, sstv::FRAME_SECONDS, "SSTV, listener there at a header"),
+        (Variant::SstvVis, starts[0], "SSTV, shown from a header"),
+    ];
+    let mut noise_jobs = Vec::new();
+    for (si, &snr) in snrs.iter().enumerate() {
+        for (li, (variant, start, _)) in noise_lines.iter().enumerate() {
+            for (ii, (name, img)) in images.iter().enumerate() {
+                noise_jobs.push((
+                    (si, li),
+                    E2eJob {
+                        image_name: name.clone(),
+                        image: img.clone(),
+                        channel: Channel::awgn(snr, 700 + 7 * ii as u64),
+                        variant: *variant,
+                        cons: Constellation::Qpsk,
+                        design_seconds: 75.0,
+                        start: *start,
+                        listen: 75.0,
+                        times: vec![sstv::FRAME_SECONDS, 75.0],
+                        keep_images: Vec::new(),
+                    },
+                ));
+            }
+        }
+    }
+    let noise_results: Vec<((usize, usize), E2eRun)> = parallel_map(noise_jobs, th, |(key, job)| (key, ex::run_e2e(&job)));
+    h += &format!(
+        "<h3>White noise only</h3><p>No echo, no clicks, no clock offset; in-band SNR defined as for the other channels. Mean over the {} images (a run without a picture scores as flat grey; the small figure is how many had one). chirpix sends QPSK and the listener starts {:.1} s into the transmission, as does the second SSTV column. The modem stops delivering packets between 4 and 2 dB; SSTV has no such threshold. SSIM can rate a noisy SSTV picture below a blank grey screen (mean SSIM {:.2}) while PSNR rates it above it.</p><div class=\"tw\"><table><tr><th>SNR</th>",
+        images.len(),
+        starts[0],
+        mean(&greys.iter().map(|g| g.2).collect::<Vec<_>>())
+    );
+    for (_, _, label) in &noise_lines {
+        h += &format!("<th>{}: 36.9 s</th><th>75 s</th>", esc(label));
+    }
+    h += "</tr>";
+    for (si, snr) in snrs.iter().enumerate() {
+        h += &format!("<tr><td>{snr:.0} dB</td>");
+        summary += &format!("Noise only {snr:.0} dB (chirpix, SSTV at a header, SSTV from a header; 36.9 and 75 s):");
+        for (li, (_, _, label)) in noise_lines.iter().enumerate() {
+            let runs: Vec<&E2eRun> = noise_results.iter().filter(|(k, _)| *k == (si, li)).map(|(_, r)| r).collect();
+            let a = aggregate(&runs, &grey, label, li == 0);
+            for (_, ps, ss, have, n) in &a.by_time {
+                h += &format!("<td>{ps:.1} dB · {ss:.3} <small>{have}/{n}</small></td>");
+                summary += &format!("  {ps:5.1} dB {ss:.3} ({have}/{n})");
+            }
+        }
+        h += "</tr>";
+        summary += "\n";
     }
     h += "</table></div>";
 
