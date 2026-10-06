@@ -7,6 +7,7 @@ use crate::fft::{Cpx, Fft};
 use crate::image::{psnr, ssim, Image};
 use crate::link::{Transmission, TxConfig};
 use crate::modem::{modem, Constellation, Params, RxOptions, FS};
+use crate::sstv;
 use crate::util::{base64, parallel_map};
 use std::sync::Arc;
 
@@ -89,6 +90,15 @@ fn img_tag(img: &Image, alt: &str) -> String {
     )
 }
 
+/// Seconds for a heading: "15", or "36.9" where it is not whole.
+fn secs(t: f64) -> String {
+    if (t - t.round()).abs() < 1e-9 {
+        format!("{t:.0}")
+    } else {
+        format!("{t:.1}")
+    }
+}
+
 fn mean(v: &[f64]) -> f64 {
     v.iter().sum::<f64>() / v.len().max(1) as f64
 }
@@ -139,7 +149,8 @@ fn spectrogram(x: &[f32]) -> Image {
 struct Agg {
     label: String,
     ours: bool,
-    cons: Constellation,
+    mode: String,
+    analogue: bool,
     source_bytes: f64,
     delivered: f64,
     /// Per time: mean PSNR, mean SSIM, runs with a picture, runs.
@@ -159,7 +170,8 @@ fn aggregate(runs: &[&E2eRun], grey: &dyn Fn(&str) -> (f64, f64), label: &str, o
     Agg {
         label: label.into(),
         ours,
-        cons: runs[0].cons,
+        mode: runs[0].mode.clone(),
+        analogue: runs[0].analogue,
         source_bytes: mean(&runs.iter().map(|r| r.source_bytes as f64).collect::<Vec<_>>()),
         delivered: mean(&runs.iter().map(|r| r.delivered).collect::<Vec<_>>()),
         by_time,
@@ -211,23 +223,37 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         .collect();
     let grey = |name: &str| -> (f64, f64) { greys.iter().find(|g| g.0 == name).map(|g| (g.1, g.2)).unwrap() };
     let step = if q { 5.0 } else { 2.5 };
-    let times: Vec<f64> = (0..=(75.0 / step) as usize).map(|i| i as f64 * step).collect();
+    // The grid, plus the length of one Robot 36 picture with its header.
+    let mut times: Vec<f64> = (0..=(75.0 / step) as usize).map(|i| i as f64 * step).collect();
+    times.push(sstv::FRAME_SECONDS);
+    times.sort_by(f64::total_cmp);
     let starts: Vec<f64> = if q { vec![13.7] } else { vec![3.3, 21.9, 40.1, 61.7] };
     let shot_times = [5.0, 15.0, 30.0, 75.0];
+    let sstv_shots = [5.0, 15.0, 30.0, sstv::FRAME_SECONDS, 75.0];
+    let table_times = sstv_shots;
     let gallery_ch = 1usize;
     let mut jobs = Vec::new();
-    // (variant, use the rule's constellation?, label, ours)
-    let lines: Vec<(Variant, bool, &str, bool)> = vec![
-        (Variant::Windowed, true, "chirpix", true),
-        (Variant::Windowed, false, "chirpix, other constellation", true),
-        (Variant::CarouselProgressive, true, "progressive, in order, no fountain", false),
-        (Variant::FlatAtomic, true, "flat fountain, all-or-nothing", false),
-        (Variant::CarouselAtomic, true, "plain file, one pass in 75 s", false),
-        (Variant::CarouselHalfAtomic, true, "plain file, half size, two passes", false),
+    // (variant, use the rule's constellation?, label, ours, listener starts at an SSTV header?)
+    let lines: Vec<(Variant, bool, &str, bool, bool)> = vec![
+        (Variant::Windowed, true, "chirpix", true, false),
+        (Variant::Windowed, false, "chirpix, other constellation", true, false),
+        (
+            Variant::CarouselProgressive,
+            true,
+            "progressive, in order, no fountain",
+            false,
+            false,
+        ),
+        (Variant::FlatAtomic, true, "flat fountain, all-or-nothing", false, false),
+        (Variant::CarouselAtomic, true, "plain file, one pass in 75 s", false, false),
+        (Variant::CarouselHalfAtomic, true, "plain file, half size, two passes", false, false),
+        (Variant::SstvVis, true, "SSTV Robot 36, shown from a header", false, false),
+        (Variant::SstvBuffered, true, "SSTV Robot 36, buffered", false, false),
+        (Variant::SstvVis, true, "SSTV Robot 36, listener there at a header", false, true),
     ];
     for (ii, (name, img)) in images.iter().enumerate() {
         for (ci, ch) in channels.iter().enumerate() {
-            for (li, (variant, rule, _, _)) in lines.iter().enumerate() {
+            for (li, (variant, rule, _, _, aligned)) in lines.iter().enumerate() {
                 let cons = if *rule {
                     probes[ci].1
                 } else if probes[ci].1 == Constellation::Qpsk {
@@ -236,7 +262,13 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                     Constellation::Qpsk
                 };
                 for (si, &start) in starts.iter().enumerate() {
-                    let keep = ii == 0 && ci == gallery_ch && si == 0 && matches!(li, 0 | 2 | 4);
+                    let start = if *aligned { sstv::FRAME_SECONDS * (si + 1) as f64 } else { start };
+                    let keep = ii == 0 && ci == gallery_ch && si == 0 && matches!(li, 0 | 2 | 4 | 6 | 8);
+                    let shots = if variant.sstv().is_some() {
+                        &sstv_shots[..]
+                    } else {
+                        &shot_times[..]
+                    };
                     jobs.push((
                         (ii, ci, li, si),
                         E2eJob {
@@ -252,7 +284,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
                             start,
                             listen: 75.0,
                             times: times.clone(),
-                            keep_images: if keep { shot_times.to_vec() } else { Vec::new() },
+                            keep_images: if keep { shots.to_vec() } else { Vec::new() },
                         },
                     ));
                 }
@@ -275,6 +307,8 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         (Variant::Windowed, "chirpix", 1usize),
         (Variant::CarouselProgressive, "progressive, in order, no fountain", 2),
         (Variant::CarouselAtomic, "plain file, one pass in 75 s", 3),
+        (Variant::SstvVis, "SSTV Robot 36, shown from a header", 4),
+        (Variant::SstvBuffered, "SSTV Robot 36, buffered", 5),
     ];
     let mut off_jobs = Vec::new();
     for (li, (variant, _, _)) in off_lines.iter().enumerate() {
@@ -390,23 +424,37 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         probes[gallery_ch].1.name(),
         starts[0]
     );
-    for li in [0usize, 2, 4] {
+    for li in [0usize, 2, 4, 6, 8] {
         if let Some((_, run)) = results.iter().find(|(k, _)| *k == (0, gallery_ch, li, 0)) {
-            h += &format!("<h3>{}</h3><div class=\"shots\">", esc(lines[li].2));
+            let how = match li {
+                6 => " (listener starts at the same moment; nothing is shown until a VIS header)",
+                8 => " (listener starts with a header, as SSTV is usually received)",
+                _ => "",
+            };
+            h += &format!("<h3>{}{}</h3><div class=\"shots\">", esc(lines[li].2), esc(how));
             for (t, img) in &run.images {
                 let pt = run.points.iter().find(|pt| (pt.time - t).abs() < 1e-6).unwrap();
                 let ar = images[0].1.h as f64 / images[0].1.w as f64;
                 match img {
                     Some(i) => {
                         h += &format!(
-                            "<div class=\"shot\">{}<b>{t:.0} s</b> · {:.1} dB · SSIM {:.3} · {:.1} kB</div>",
-                            img_tag(i, &format!("{} after {t:.0} s", lines[li].2)),
+                            "<div class=\"shot\">{}<b>{} s</b> · {:.1} dB · SSIM {:.3} · {}</div>",
+                            img_tag(i, &format!("{} after {} s", lines[li].2, secs(*t))),
+                            secs(*t),
                             pt.psnr.unwrap_or(0.0),
                             pt.ssim.unwrap_or(0.0),
-                            pt.bytes as f64 / 1000.0
+                            if run.analogue {
+                                format!("{} rows", pt.bytes)
+                            } else {
+                                format!("{:.1} kB", pt.bytes as f64 / 1000.0)
+                            }
                         )
                     }
-                    None => h += &format!("<div class=\"shot\"><div class=\"none\" style=\"height:{:.0}px\">nothing yet</div><b>{t:.0} s</b> · no picture</div>", 200.0 * ar),
+                    None => h += &format!(
+                        "<div class=\"shot\"><div class=\"none\" style=\"height:{:.0}px\">nothing yet</div><b>{} s</b> · no picture</div>",
+                        200.0 * ar,
+                        secs(*t)
+                    ),
                 }
             }
             if li == 0 {
@@ -419,7 +467,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
     // ---- headline tables
     h += "<h2>Quality against listening time</h2>";
     h += &format!(
-        "<p>Mean over {} image{} and {} start time{} per channel. PSNR is over all RGB samples; SSIM is on luma (11x11 Gaussian window). A run with no picture yet is scored as a flat grey image, which is what a blank screen would get (mean {:.1} dB, SSIM {:.2} for these images); the small figure is how many runs had a picture. Every scheme uses the same modem, the same codec and the same seconds of audio.</p>",
+        "<p>Mean over {} image{} and {} start time{} per channel. PSNR is over all RGB samples; SSIM is on luma (11x11 Gaussian window). A run with no picture yet is scored as a flat grey image, which is what a blank screen would get (mean {:.1} dB, SSIM {:.2} for these images); the small figure is how many runs had a picture. The digital schemes use the same modem, the same codec and the same seconds of audio; SSTV (see below) goes through the same channels with the same seeds and start times, and the 36.9 s column is the length of one SSTV picture with its header.</p>",
         images.len(),
         if images.len() == 1 { "" } else { "s" },
         starts.len(),
@@ -427,7 +475,7 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         mean(&greys.iter().map(|g| g.1).collect::<Vec<_>>()),
         mean(&greys.iter().map(|g| g.2).collect::<Vec<_>>())
     );
-    let tidx: Vec<usize> = shot_times
+    let tidx: Vec<usize> = table_times
         .iter()
         .map(|t| times.iter().position(|x| (x - t).abs() < 1e-6).unwrap())
         .collect();
@@ -443,26 +491,31 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         );
         summary += &format!("Channel {}: {} -> {}\n", ch.name, ch.describe(), probes[ci].1.name());
         h += "<div class=\"tw\"><table><tr><th>Scheme</th><th>Mode</th><th>File</th><th>Packets delivered</th>";
-        for t in shot_times {
-            h += &format!("<th>{t:.0} s</th>");
+        for t in table_times {
+            h += &format!("<th>{} s</th>", secs(t));
         }
         h += "</tr>";
         let mut series = Vec::new();
-        for (li, (_, _, label, ours)) in lines.iter().enumerate() {
+        for (li, (_, _, label, ours, _)) in lines.iter().enumerate() {
             let runs = pick(ci, li, None);
             if runs.is_empty() {
                 continue;
             }
             let a = aggregate(&runs, &grey, label, *ours);
+            let (file, delivered) = if a.analogue {
+                ("320x240 analogue".to_string(), format!("{:.0}% of lines", a.delivered * 100.0))
+            } else {
+                (format!("{:.1} kB", a.source_bytes / 1000.0), format!("{:.0}%", a.delivered * 100.0))
+            };
             h += &format!(
-                "<tr><td{}>{}</td><td>{}</td><td>{:.1} kB</td><td>{:.0}%</td>",
+                "<tr><td{}>{}</td><td>{}</td><td>{}</td><td>{}</td>",
                 if a.ours { " class=\"ours\"" } else { "" },
                 esc(&a.label),
-                a.cons.name(),
-                a.source_bytes / 1000.0,
-                a.delivered * 100.0
+                esc(&a.mode),
+                esc(&file),
+                esc(&delivered)
             );
-            summary += &format!("  {:<36} {:<7} {:5.1} kB", a.label, a.cons.name(), a.source_bytes / 1000.0);
+            summary += &format!("  {:<42} {:<8} {:>16}", a.label, a.mode, file);
             for &ti in &tidx {
                 let (_, ps, ss, have, n) = a.by_time[ti];
                 h += &format!("<td>{ps:.1} dB · {ss:.3} <small>{have}/{n}</small></td>");
@@ -470,8 +523,8 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
             }
             h += "</tr>";
             summary += "\n";
-            if li != 1 && li != 5 {
-                let slot = [1, 0, 2, 4, 3, 0][li];
+            if matches!(li, 0 | 2 | 3 | 4 | 6) {
+                let slot = [1, 0, 2, 4, 3, 0, 5][li];
                 series.push(Series::new(label, slot, a.by_time.iter().map(|b| (b.0, b.1)).collect()));
             }
         }
@@ -485,34 +538,109 @@ pub fn generate(cfg: &ReportConfig) -> ReportOutput {
         charts_psnr += &render(&chart).replace("class=\"chart\"", "class=\"chart small\"");
     }
     h += &format!("<div class=\"row\">{charts_psnr}</div>");
-    h += "<details><summary>Per-image numbers for chirpix</summary><table><tr><th>Image</th><th>Channel</th><th>Mode</th>";
-    for t in shot_times {
-        h += &format!("<th>{t:.0} s</th>");
+    h += "<details><summary>Per-image numbers for chirpix and SSTV (shown from a header)</summary><table><tr><th>Image</th><th>Scheme</th><th>Channel</th><th>Mode</th>";
+    for t in table_times {
+        h += &format!("<th>{} s</th>", secs(t));
     }
     h += "</tr>";
     for (ii, (name, _)) in images.iter().enumerate() {
-        for (ci, ch) in channels.iter().enumerate() {
-            let runs = pick(ci, 0, Some(ii));
-            if runs.is_empty() {
-                continue;
+        for (li, scheme) in [(0usize, "chirpix"), (6, "SSTV")] {
+            for (ci, ch) in channels.iter().enumerate() {
+                let runs = pick(ci, li, Some(ii));
+                if runs.is_empty() {
+                    continue;
+                }
+                let a = aggregate(&runs, &grey, scheme, li == 0);
+                h += &format!(
+                    "<tr><td>{}</td><td>{scheme}</td><td>{}</td><td>{}</td>",
+                    esc(name),
+                    esc(&ch.name),
+                    esc(&a.mode)
+                );
+                summary += &format!("  per-image {:<10} {:<7} {:<5} {:<8}", name, scheme, ch.name, a.mode);
+                for &ti in &tidx {
+                    let (_, ps, ss, have, n) = a.by_time[ti];
+                    h += &format!("<td>{ps:.1} dB · {ss:.3} <small>{have}/{n}</small></td>");
+                    summary += &format!("  {ps:5.1} dB {ss:.3}");
+                }
+                h += "</tr>";
+                summary += "\n";
             }
-            let a = aggregate(&runs, &grey, "chirpix", true);
-            h += &format!("<tr><td>{}</td><td>{}</td><td>{}</td>", esc(name), esc(&ch.name), a.cons.name());
-            summary += &format!("  per-image {:<10} {:<5} {:<7}", name, ch.name, a.cons.name());
-            for &ti in &tidx {
-                let (_, ps, ss, have, n) = a.by_time[ti];
-                h += &format!("<td>{ps:.1} dB · {ss:.3} <small>{have}/{n}</small></td>");
-                summary += &format!("  {ps:5.1} dB {ss:.3}");
-            }
-            h += "</tr>";
-            summary += "\n";
         }
     }
     h += "</table></details>";
 
+    // ---- SSTV
+    log("SSTV details");
+    h += &format!(
+        "<h2>Analogue baseline: SSTV Robot 36</h2><p>Robot 36 is one of the most used slow-scan television modes: 320x240, luma and alternating R-Y / B-Y lines, 150 ms per line, {:.2} s per picture with its VIS header (timing from J. L. Barber, “Proposal for SSTV Mode Specifications”, Dayton 2000; checked sample by sample against pySSTV, see <code>make sstv-check</code>). Here a beacon sends the same picture over and over through the same simulated channels, with the same seeds and start times as the digital schemes. The audio has the same average power as the OFDM signal. A constant-envelope signal could be played about 7.6 dB louder before reaching the same peak level; this comparison does not give it that. The picture is shrunk to 320x240 to send and enlarged back for scoring, which alone limits the quality to the first table.</p><p>The receiver is an FM discriminator with VIS detection, line sync tracked with a clock-offset fit, and the even/odd separator tones to keep the line count right across dropouts. It measures the frequency noise on the sync pulses and averages each pixel over 4 to 16 pixel widths (chroma four times as many); that rule was tuned for PSNR on the built-in test pictures, not on these images. “Shown from a header” is what SSTV programs do: nothing is shown until a VIS header has been heard, then lines appear one by one. “Buffered” also keeps the lines heard before that header and places them, counting back, when it arrives. The picture is never complete before a whole picture has been heard (36.9 s), and a row that has not arrived is mid-grey.</p>",
+        sstv::FRAME_SECONDS
+    );
+    h += "<div class=\"tw\"><table><tr><th>Image</th><th>Shrunk to 320x240 and back, no channel</th></tr>";
+    for (name, img) in &images {
+        let back = sstv::fit(img).resize(img.w, img.h);
+        let (p, q) = (psnr(img, &back), ssim(img, &back));
+        h += &format!("<tr><td>{}</td><td>{p:.1} dB · {q:.3}</td></tr>", esc(name));
+        summary += &format!("SSTV resolution limit {name}: {p:.1} dB {q:.3}\n");
+    }
+    h += "</table></div>";
+    let mut sstv_channels = vec![Channel::clean()];
+    sstv_channels.extend(channels.iter().cloned());
+    let sstv_rows = parallel_map(sstv_channels, th, |ch| {
+        let img = &images[0].1;
+        let pic = sstv::fit(img);
+        // One picture heard from a second before its header.
+        let audio = ch.apply(&sstv::beacon_audio(
+            &pic,
+            sstv::Convention::Spec,
+            sstv::FRAME_SECONDS - 1.0,
+            sstv::FRAME_SECONDS + 2.0,
+        ));
+        let score = |rx: &sstv::Reception| {
+            rx.picture(rx.duration, sstv::Placement::FromVis, sstv::Convention::Spec).map(|p| {
+                let big = p.resize(img.w, img.h);
+                (psnr(img, &big), ssim(img, &big))
+            })
+        };
+        let rx = sstv::receive(&audio, FS);
+        let raw = sstv::receive_with(&audio, FS, Some((1.0, 1.0)));
+        (
+            ch.name.clone(),
+            rx.headers.len(),
+            rx.sync_noise_hz,
+            rx.smoothing,
+            rx.ppm,
+            score(&rx),
+            score(&raw),
+        )
+    });
+    h += &format!(
+        "<p>One picture of {}, heard from a second before its header, through each channel (one run each):</p><div class=\"tw\"><table><tr><th>Channel</th><th>Headers found</th><th>Noise on the sync pulses</th><th>Pixel widths averaged (Y / chroma)</th><th>Clock</th><th>Picture</th><th>Each pixel on its own</th></tr>",
+        esc(gname)
+    );
+    for (name, headers, noise, sm, ppm, q, raw) in &sstv_rows {
+        let f = |v: &Option<(f64, f64)>| v.map_or("no picture".to_string(), |(p, s)| format!("{p:.1} dB · {s:.3}"));
+        h += &format!(
+            "<tr><td>{}</td><td>{headers}</td><td>{noise:.0} Hz</td><td>{:.1} / {:.1}</td><td>{ppm:+.0} ppm</td><td>{}</td><td>{}</td></tr>",
+            esc(name),
+            sm.0,
+            sm.1,
+            f(q),
+            f(raw)
+        );
+        summary += &format!(
+            "SSTV one picture, channel {name}: {headers} header(s), sync noise {noise:.0} Hz, smoothing {:.1}/{:.1}, {ppm:+.0} ppm, {} (unsmoothed {})\n",
+            sm.0,
+            sm.1,
+            f(q),
+            f(raw)
+        );
+    }
+    h += "</table></div>";
+
     // ---- start offset
     h += &format!(
-        "<h2>Quality against the moment the listener starts</h2><p>Image {}, channel “{}”, every scheme sized for 75 s. Each point is one run: the listener starts at that time into the transmission and listens for 30 s.</p>",
+        "<h2>Quality against the moment the listener starts</h2><p>Image {}, channel “{}”, every digital scheme sized for 75 s; SSTV sends one 36.9 s picture over and over. Each point is one run: the listener starts at that time into the transmission and listens for 30 s.</p>",
         esc(gname),
         esc(&channels[gallery_ch].name)
     );

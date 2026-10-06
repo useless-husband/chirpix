@@ -7,6 +7,7 @@ use crate::fountain::{Scheme, T};
 use crate::image::{psnr, ssim, Image};
 use crate::link::{frames_for, receive_recording, Transmission, TxConfig};
 use crate::modem::{modem, Constellation, FrameSpec, Modem, RxOptions, FS};
+use crate::sstv::{self, Convention, Placement};
 use crate::util::{parallel_map, q_func, Rng};
 
 #[derive(Clone, Debug, Default)]
@@ -486,6 +487,7 @@ pub fn numerology_sweep(frames: usize, threads: usize) -> Vec<NumerologyRow> {
 #[derive(Clone)]
 pub struct QualityPoint {
     pub time: f64,
+    /// Stream bytes decoded; for SSTV, rows on screen.
     pub bytes: usize,
     pub psnr: Option<f64>,
     pub ssim: Option<f64>,
@@ -496,9 +498,15 @@ pub struct E2eRun {
     pub image: String,
     pub channel: String,
     pub scheme: String,
+    /// Constellation asked for (ignored by SSTV).
     pub cons: Constellation,
+    /// "QPSK", "16-QAM" or "Robot 36".
+    pub mode: String,
+    /// Analogue (SSTV): no file, `source_bytes` is 0.
+    pub analogue: bool,
     pub source_bytes: usize,
-    /// Share of transmitted packets that arrived.
+    /// Share of transmitted packets that arrived; for SSTV, share of the
+    /// lines heard that were placed in the picture.
     pub delivered: f64,
     pub rx_snr_db: f64,
     pub rx_ppm: f64,
@@ -520,6 +528,12 @@ pub enum Variant {
     /// Progressive codec sent in order and repeated, no fountain code:
     /// shows whatever prefix has arrived.
     CarouselProgressive,
+    /// Analogue SSTV (Robot 36) sent over and over; the receiver starts at a
+    /// VIS header, as SSTV programs do.
+    SstvVis,
+    /// The same audio; the receiver also places lines heard before the
+    /// first header.
+    SstvBuffered,
 }
 
 impl Variant {
@@ -530,6 +544,15 @@ impl Variant {
             Variant::CarouselAtomic => "plain file, one pass",
             Variant::CarouselHalfAtomic => "plain file, half size, two passes",
             Variant::CarouselProgressive => "progressive, in order, no fountain",
+            Variant::SstvVis => "SSTV Robot 36, from a header",
+            Variant::SstvBuffered => "SSTV Robot 36, buffered",
+        }
+    }
+    pub fn sstv(self) -> Option<Placement> {
+        match self {
+            Variant::SstvVis => Some(Placement::FromVis),
+            Variant::SstvBuffered => Some(Placement::Buffered),
+            _ => None,
         }
     }
     pub fn config(self, cons: Constellation, design_seconds: f64) -> (TxConfig, bool) {
@@ -571,6 +594,7 @@ impl Variant {
                 },
                 false,
             ),
+            Variant::SstvVis | Variant::SstvBuffered => panic!("{self:?} is analogue: no modem configuration"),
         }
     }
 }
@@ -590,6 +614,9 @@ pub struct E2eJob {
 }
 
 pub fn run_e2e(job: &E2eJob) -> E2eRun {
+    if let Some(placement) = job.variant.sstv() {
+        return run_sstv(job, placement);
+    }
     let (cfg, atomic) = job.variant.config(job.cons, job.design_seconds);
     let tx = Transmission::new(&job.image, &cfg);
     // Transmit a little before the listener starts and after they stop,
@@ -633,6 +660,8 @@ pub fn run_e2e(job: &E2eJob) -> E2eRun {
         channel: job.channel.name.clone(),
         scheme: job.variant.name().into(),
         cons: job.cons,
+        mode: cfg.cons.name().into(),
+        analogue: false,
         source_bytes: tx.stream.len(),
         delivered: rec.packets.len() as f64 / sent_packets.max(1.0),
         rx_snr_db: if frames.is_empty() {
@@ -641,6 +670,80 @@ pub fn run_e2e(job: &E2eJob) -> E2eRun {
             frames.iter().map(|f| f.snr_db).sum::<f64>() / frames.len() as f64
         },
         rx_ppm: rec.ppm,
+        points,
+        images,
+    }
+}
+
+/// The same job with analogue SSTV: a beacon sending the picture (shrunk to
+/// 320x240) over and over, Robot 36, through the same channel. Pictures are
+/// scored after enlarging them back to the original size.
+fn run_sstv(job: &E2eJob, placement: Placement) -> E2eRun {
+    let pic = sstv::fit(&job.image);
+    // Transmit from a second before the listener starts, as for the modem.
+    let lead = job.start.min(1.0);
+    let audio = sstv::beacon_audio(&pic, Convention::Spec, job.start - lead, lead + job.listen + 0.5);
+    let received = job.channel.apply(&audio);
+    let skip = (lead * FS as f64) as usize;
+    let end = (skip + (job.listen * FS as f64) as usize).min(received.len());
+    let rx = sstv::receive(&received[skip.min(end)..end], FS);
+    let (w, h) = (job.image.w, job.image.h);
+    let mut points = Vec::new();
+    let mut images = Vec::new();
+    let mut last: Option<(Image, f64, f64)> = None;
+    for &t in &job.times {
+        let shown = rx.picture(t, placement, Convention::Spec);
+        let (p, q) = match (&shown, &last) {
+            (None, _) => (None, None),
+            (Some(img), Some((prev, p, q))) if img == prev => (Some(*p), Some(*q)),
+            (Some(img), _) => {
+                let big = img.resize(w, h);
+                let (p, q) = (psnr(&job.image, &big), ssim(&job.image, &big));
+                last = Some((img.clone(), p, q));
+                (Some(p), Some(q))
+            }
+        };
+        points.push(QualityPoint {
+            time: t,
+            bytes: rx.rows_shown(t, placement),
+            psnr: p,
+            ssim: q,
+        });
+        if job.keep_images.iter().any(|k| (k - t).abs() < 1e-6) {
+            images.push((t, shown.map(|i| i.resize(w, h))));
+        }
+    }
+    // Whole line slots of the transmission inside the listening window.
+    let line = sstv::LINE_MS / 1000.0;
+    let (a, b) = (job.start, job.start + job.listen);
+    let mut heard = 0usize;
+    let mut c = (a / sstv::FRAME_SECONDS).floor();
+    while c * sstv::FRAME_SECONDS < b {
+        let first = c * sstv::FRAME_SECONDS + sstv::VIS_MS / 1000.0;
+        heard += (0..sstv::HEIGHT)
+            .filter(|&k| {
+                let t = first + line * k as f64;
+                t >= a && t + line <= b
+            })
+            .count();
+        c += 1.0;
+    }
+    let placed = rx
+        .lines
+        .iter()
+        .filter(|l| l.time + line <= job.listen + 0.002 && (l.forward || placement == Placement::Buffered))
+        .count();
+    E2eRun {
+        image: job.image_name.clone(),
+        channel: job.channel.name.clone(),
+        scheme: job.variant.name().into(),
+        cons: job.cons,
+        mode: "Robot 36".into(),
+        analogue: true,
+        source_bytes: 0,
+        delivered: placed as f64 / heard.max(1) as f64,
+        rx_snr_db: f64::NAN,
+        rx_ppm: rx.ppm,
         points,
         images,
     }
