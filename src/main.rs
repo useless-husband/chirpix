@@ -38,9 +38,11 @@ USAGE
 
   chirpix sstv-decode <recording.wav> [-o out_dir] [--every 5] [--ref image.png]
                  [--placement vis|buffered] [--convention spec|pysstv]
+                 [--smoothing Y,C]
       Decode Robot 36. vis: start at a VIS header, as SSTV programs do;
-      buffered: also place lines heard before the first header. Writes the
-      picture every --every seconds, final.png and timeline.csv.
+      buffered: also place lines heard before the first header. Pixels are
+      measured over Y,C pixel widths (default: chosen from the noise).
+      Writes the picture every --every seconds, final.png and timeline.csv.
 
   chirpix testimage <scene|chart|clouds> [-o image.png] [--size 384x256]
       Write one of the built-in procedural test pictures.
@@ -318,7 +320,7 @@ fn cmd_sstv_encode(raw: &[String]) -> Result<(), String> {
 
 fn cmd_sstv_decode(raw: &[String]) -> Result<(), String> {
     let a = parse_args(raw, &[])?;
-    a.known(&["out", "every", "ref", "placement", "convention"])?;
+    a.known(&["out", "every", "ref", "placement", "convention", "smoothing"])?;
     let input = a.pos.first().ok_or("sstv-decode: which recording?")?;
     let w = wav::read(Path::new(input)).map_err(|e| format!("{input}: {e}"))?;
     if !(8000..=192_000).contains(&w.rate) {
@@ -342,7 +344,17 @@ fn cmd_sstv_decode(raw: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let duration = w.samples.len() as f64 / w.rate as f64;
     println!("recording    {input}: {duration:.1} s at {} Hz, {} channel(s)", w.rate, w.channels);
-    let rx = sstv::receive(&w.samples, w.rate);
+    let smoothing = match a.opt.get("smoothing") {
+        None => None,
+        Some(v) => {
+            let p: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+            match p[..] {
+                [y, c] if (0.5..=64.0).contains(&y) && (0.5..=256.0).contains(&c) => Some((y, c)),
+                _ => return Err(format!("--smoothing: '{v}' is not Y,C pixel widths such as 4,16")),
+            }
+        }
+    };
+    let rx = sstv::receive_with(&w.samples, w.rate, smoothing);
     for h in &rx.headers {
         println!(
             "header       at {:.2} s: VIS code {}{}",
