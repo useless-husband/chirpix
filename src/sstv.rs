@@ -429,46 +429,51 @@ impl Rx {
         // tau: the first ms of the start bit.
         let mut found: Vec<(usize, f64)> = Vec::new();
         let lead = LEADER_MS as usize;
+        // Both 300 ms leaders (the first only if the recording holds it), then
+        // 1200 Hz start and stop bits. The bits are allowed to be weak: in a
+        // room a notch near 1200 Hz can leave them under the leader's echo.
+        let leader_ok = |from: usize| (0..29).filter(|i| ratio(leader, from + 10 * i, from + 10 + 10 * i) >= 0.4).count() >= 24;
         for tau in lead..m.saturating_sub(300) {
-            let start = ratio(sync, tau + 2, tau + 28);
-            if start < 0.3 || ratio(sync, tau + 272, tau + 298) < 0.2 {
+            if ratio(sync, tau + 2, tau + 28) < 0.15 || ratio(sync, tau + 272, tau + 298) < 0.15 {
                 continue;
             }
-            let ok = (0..29)
-                .filter(|i| ratio(leader, tau - 295 + 10 * i, tau - 285 + 10 * i) >= 0.4)
-                .count();
-            if ok < 24 {
+            if !leader_ok(tau - 295) || (tau >= 605 && !leader_ok(tau - 605)) {
                 continue;
             }
-            // Best alignment: the whole 30 ms bit inside the window.
-            let fit = ratio(sync, tau, tau + 30);
-            match found.last_mut() {
-                Some((t, s)) if tau - *t < 40 => {
-                    if fit > *s {
-                        *t = tau;
-                        *s = fit;
+            // How well the whole 30 ms bit fits the window.
+            found.push((tau, ratio(sync, tau, tau + 30)));
+        }
+        let decode = |tau: usize| {
+            let bits: Vec<u8> = (0..8)
+                .map(|i| {
+                    let (a, b) = (tau + 30 * (i + 1) + 4, tau + 30 * (i + 2) - 4);
+                    (ratio(bit1, a, b) > ratio(bit0, a, b)) as u8
+                })
+                .collect();
+            Header {
+                line0: (tau as f64 + 10.0 * BIT_MS) / 1000.0,
+                code: (0..7).fold(0u8, |c, i| c | (bits[i] << i)),
+                parity_ok: bits.iter().map(|&b| b as u32).sum::<u32>() % 2 == 0,
+            }
+        };
+        // Candidates within half a second are one header (echo can make its
+        // pattern fit at several offsets): keep a valid Robot 36 code first,
+        // then the best-fitting start bit.
+        let mut out: Vec<(Header, (bool, f64))> = Vec::new();
+        for (tau, fit) in found {
+            let h = decode(tau);
+            let key = (h.code == VIS_CODE && h.parity_ok, fit);
+            match out.last_mut() {
+                Some((prev, pk)) if (h.line0 - prev.line0) < 0.5 => {
+                    if key > *pk {
+                        *prev = h;
+                        *pk = key;
                     }
                 }
-                _ => found.push((tau, fit)),
+                _ => out.push((h, key)),
             }
         }
-        found
-            .into_iter()
-            .map(|(tau, _)| {
-                let bits: Vec<u8> = (0..8)
-                    .map(|i| {
-                        let (a, b) = (tau + 30 * (i + 1) + 4, tau + 30 * (i + 2) - 4);
-                        (ratio(bit1, a, b) > ratio(bit0, a, b)) as u8
-                    })
-                    .collect();
-                let code = (0..7).fold(0u8, |c, i| c | (bits[i] << i));
-                Header {
-                    line0: (tau as f64 + 10.0 * BIT_MS) / 1000.0,
-                    code,
-                    parity_ok: bits.iter().map(|&b| b as u32).sum::<u32>() % 2 == 0,
-                }
-            })
-            .collect()
+        out.into_iter().map(|(h, _)| h).collect()
     }
 
     /// Rms error in Hz of frequencies measured over one Y pixel inside the
