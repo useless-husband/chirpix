@@ -171,3 +171,36 @@ fn command_line_round_trip_at_another_sample_rate() {
     let out = Command::new(bin).args(["encode", &p("missing.png")]).output().unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn sstv_shows_lines_once_a_header_is_heard() {
+    // A listener joins 20 s into a Robot 36 picture: the next header starts
+    // 16.91 s later and line 0 follows it at 17.82 s.
+    let times = [10.0, 17.5, 30.0, 56.91];
+    let fair = Channel::fair();
+    let vis = run_e2e(&job(Variant::SstvVis, fair.clone(), Constellation::Qpsk, 20.0, 57.0, &times));
+    let buf = run_e2e(&job(Variant::SstvBuffered, fair, Constellation::Qpsk, 20.0, 57.0, &times));
+    assert!(vis.analogue && vis.mode == "Robot 36");
+    for r in [&vis, &buf] {
+        assert!(
+            r.points[0].psnr.is_none() && r.points[1].psnr.is_none(),
+            "{}: a picture before the header",
+            r.scheme
+        );
+    }
+    // From the header on, a line every 150 ms: 81 by 30 s. Buffering adds the
+    // lines heard before the header (rows 113 and up).
+    let rows = |r: &chirpix::experiments::E2eRun, i: usize| r.points[i].bytes;
+    assert!((80..=82).contains(&rows(&vis, 2)), "{} rows at 30 s", rows(&vis, 2));
+    assert!(rows(&buf, 2) >= rows(&vis, 2) + 100, "{} rows buffered", rows(&buf, 2));
+    assert_eq!((rows(&vis, 3), rows(&buf, 3)), (240, 240));
+    // The whole picture beats the half-filled one, and more lines were placed
+    // by the buffered receiver.
+    assert!(vis.points[3].psnr.unwrap() > vis.points[2].psnr.unwrap() + 1.0);
+    assert!(
+        buf.delivered > 0.95 && vis.delivered < 0.8,
+        "lines placed {:.2} / {:.2}",
+        buf.delivered,
+        vis.delivered
+    );
+}
