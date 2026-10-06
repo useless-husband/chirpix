@@ -4,6 +4,7 @@
 //! ([`modem`]), convolutional code and Viterbi decoder ([`conv`]), the
 //! expanding-window fountain code ([`fountain`]), the progressive wavelet
 //! image codec ([`codec`]), and the WAV / PNG / DEFLATE file formats.
+//! [`sstv`] is the analogue baseline (Robot 36) it is compared against.
 
 // Signal-processing loops here index several arrays by the same carrier or
 // sample number; iterator chains would hide that.
@@ -24,6 +25,7 @@ pub mod modem;
 pub mod png;
 pub mod rangecoder;
 pub mod report;
+pub mod sstv;
 pub mod util;
 pub mod wav;
 pub mod wavelet;

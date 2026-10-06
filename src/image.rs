@@ -75,6 +75,34 @@ impl Image {
         out
     }
 
+    /// Resize to any size: area averaging when shrinking an axis, linear
+    /// interpolation between pixel centres when enlarging it.
+    pub fn resize(&self, w: usize, h: usize) -> Image {
+        if (w, h) == (self.w, self.h) {
+            return self.clone();
+        }
+        let (wx, wy) = (resize_weights(self.w, w), resize_weights(self.h, h));
+        // Rows first, into floats; then columns.
+        let mut tmp = vec![0f32; w * self.h * 3];
+        for y in 0..self.h {
+            for (x, taps) in wx.iter().enumerate() {
+                for c in 0..3 {
+                    tmp[(y * w + x) * 3 + c] = taps.iter().map(|&(i, g)| g * self.data[(y * self.w + i) * 3 + c] as f32).sum();
+                }
+            }
+        }
+        let mut out = Image::new(w, h);
+        for (y, taps) in wy.iter().enumerate() {
+            for x in 0..w {
+                for c in 0..3 {
+                    let v: f32 = taps.iter().map(|&(i, g)| g * tmp[(i * w + x) * 3 + c]).sum();
+                    out.data[(y * w + x) * 3 + c] = v.round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+        out
+    }
+
     /// BT.601 luma in [0, 255].
     pub fn luma(&self) -> Vec<f32> {
         self.data
@@ -82,6 +110,36 @@ impl Image {
             .map(|p| 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
             .collect()
     }
+}
+
+/// Input samples and weights for each output sample when `n_in` samples
+/// become `n_out`. Each row of weights sums to one.
+fn resize_weights(n_in: usize, n_out: usize) -> Vec<Vec<(usize, f32)>> {
+    let scale = n_in as f64 / n_out as f64;
+    (0..n_out)
+        .map(|o| {
+            let mut taps = Vec::new();
+            if scale > 1.0 {
+                // Output sample o covers input [o * scale, (o + 1) * scale).
+                let (a, b) = (o as f64 * scale, (o + 1) as f64 * scale);
+                for i in a.floor() as usize..(b.ceil() as usize).min(n_in) {
+                    let cover = (b.min(i as f64 + 1.0) - a.max(i as f64)).max(0.0);
+                    if cover > 0.0 {
+                        taps.push((i, (cover / scale) as f32));
+                    }
+                }
+            } else {
+                let c = ((o as f64 + 0.5) * scale - 0.5).clamp(0.0, (n_in - 1) as f64);
+                let i = c.floor() as usize;
+                let f = c - i as f64;
+                taps.push((i, (1.0 - f) as f32));
+                if f > 0.0 {
+                    taps.push((i + 1, f as f32));
+                }
+            }
+            taps
+        })
+        .collect()
 }
 
 /// Peak signal-to-noise ratio in dB over all RGB samples. Capped at 99 dB
@@ -320,5 +378,26 @@ mod tests {
         let u = d.upscale(2);
         assert_eq!((u.w, u.h), (64, 48));
         assert!(psnr(&a, &u) > 30.0);
+    }
+
+    #[test]
+    fn resize_keeps_flat_areas_and_smooth_pictures() {
+        let g = Image::filled(768, 512, [10, 128, 250]);
+        assert!(g.resize(320, 240).data.chunks_exact(3).all(|p| p == [10, 128, 250]));
+        assert!(g.resize(320, 240).resize(768, 512) == g);
+        // Non-integer factors both ways, as SSTV needs (768x512 -> 320x240 -> back).
+        let a = synthetic("clouds", 768, 512);
+        let s = a.resize(320, 240);
+        assert_eq!((s.w, s.h), (320, 240));
+        assert!(psnr(&a, &s.resize(768, 512)) > 35.0);
+        // Area averaging: a one-pixel checkerboard shrinks to mid-grey.
+        let mut c = Image::new(64, 64);
+        for y in 0..64 {
+            for x in 0..64 {
+                let v = if (x + y) % 2 == 0 { 255 } else { 0 };
+                c.set(x, y, [v, v, v]);
+            }
+        }
+        assert!(c.resize(16, 16).data.iter().all(|&v| v == 128 || v == 127));
     }
 }
